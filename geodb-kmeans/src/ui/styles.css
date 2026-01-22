@@ -611,6 +611,47 @@ body {
   color: #333;
 }
 
+/* Error Panel */
+.error-panel {
+  background-color: #f8d7da;
+  border: 1px solid #f5c6cb;
+  border-radius: 4px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.error-message {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  color: #721c24;
+}
+
+.error-message strong {
+  font-weight: 600;
+}
+
+/* Cancel Button */
+.btn-danger {
+  background-color: #dc3545;
+  color: white;
+}
+
+.btn-danger:hover {
+  background-color: #c82333;
+}
+
+.btn-danger:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}
+
+.status-cancelled {
+  color: #6c757d;
+  background-color: #e9ecef;
+}
+
 .page-info-text {
   font-size: 0.9rem;
   color: #666;

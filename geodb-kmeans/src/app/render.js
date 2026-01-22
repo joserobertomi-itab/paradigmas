@@ -25,6 +25,13 @@ import {
   selectClusterFilter
 } from './selectors.js';
 
+function escapeHtml(text) {
+  if (text == null) return '';
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
 export function render(root, state) {
   if (!root) {
     root = document.getElementById('app');
@@ -185,8 +192,23 @@ export function render(root, state) {
     nextPageBtn.disabled = results.length < pageSize;
   }
 
+  const cancelBtn = qs('#cancel-btn', root);
+  
   if (processBtn) {
     const status = selectAsyncStatus(state);
-    processBtn.disabled = status === 'loading' || status === 'clustering';
+    const isRunning = status === 'loading' || status === 'clustering';
+    processBtn.disabled = isRunning;
+    
+    // Show/hide cancel button
+    if (cancelBtn) {
+      cancelBtn.style.display = isRunning ? 'inline-block' : 'none';
+    }
+  }
+  
+  // Update cancel button state
+  if (cancelBtn) {
+    const status = selectAsyncStatus(state);
+    const isRunning = status === 'loading' || status === 'clustering';
+    cancelBtn.disabled = !isRunning;
   }
 }

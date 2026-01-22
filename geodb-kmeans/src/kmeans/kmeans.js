@@ -24,7 +24,8 @@ export async function kmeans(buffers, k, options = {}) {
     maxIter = 100,
     epsilon = 0.0001,
     workerCount = 4,
-    onProgress = null
+    onProgress = null,
+    isCancelled = () => false
   } = options;
 
   const totalPoints = buffers.writeIndex[0];
@@ -70,6 +71,12 @@ export async function kmeans(buffers, k, options = {}) {
 
   try {
     while (iterations < maxIter && !converged) {
+      // Check for cancellation
+      if (isCancelled()) {
+        pool.terminate();
+        throw new Error('K-means cancelled');
+      }
+      
       iterations++;
 
       // Divide work among workers

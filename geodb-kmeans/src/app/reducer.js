@@ -122,6 +122,46 @@ export function reducer(state = initialState, action) {
         }
       };
 
+    case 'ASYNC/CANCEL':
+      return {
+        ...state,
+        async: {
+          ...state.async,
+          cancelled: true,
+          status: 'cancelled',
+          inFlight: false
+        }
+      };
+
+    case 'ASYNC/RESET':
+      return {
+        ...state,
+        async: {
+          ...state.async,
+          cancelled: false,
+          status: 'idle',
+          error: null,
+          inFlight: false,
+          progress: 0
+        },
+        bulk: {
+          ...state.bulk,
+          loaded: 0
+        },
+        kmeans: {
+          ...state.kmeans,
+          status: 'idle',
+          clusters: null,
+          iterations: 0,
+          metrics: {
+            loadTimeMs: 0,
+            kmeansTimeMs: 0,
+            totalTimeMs: 0,
+            workersUsed: 0
+          }
+        }
+      };
+
     case 'ASYNC/ADD_LOG': {
       const log = action.payload;
       if (!log) {

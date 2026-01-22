@@ -14,9 +14,10 @@ export const initialState = {
 
   // Async operations
   async: {
-    status: 'idle', // idle | loading | clustering | done | error
+    status: 'idle', // idle | loading | clustering | done | error | cancelled
     error: null,
     inFlight: false,
+    cancelled: false, // Flag to signal cancellation
     requestId: 0, // Incremental ID to prevent race conditions
     progress: 0,
     logs: []

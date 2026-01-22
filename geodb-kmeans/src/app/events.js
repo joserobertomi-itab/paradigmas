@@ -173,9 +173,35 @@ export function bindEvents(root, store) {
 
   // Process button
   const processBtn = qs('#process-btn', root);
+  let currentPool = null; // Store reference to worker pool for cancellation
+  
   if (processBtn) {
     on(processBtn, 'click', async () => {
-      await startBulkLoadAndKmeans(store);
+      // Reset cancellation flag
+      store.dispatch(actions.resetAsync());
+      currentPool = await startBulkLoadAndKmeans(store, (pool) => {
+        currentPool = pool;
+      });
+    });
+  }
+
+  // Cancel button
+  const cancelBtn = qs('#cancel-btn', root);
+  if (cancelBtn) {
+    on(cancelBtn, 'click', () => {
+      store.dispatch(actions.cancelOperation());
+      store.dispatch(actions.addLog('Operação cancelada pelo usuário'));
+      
+      // Terminate workers
+      if (currentPool) {
+        currentPool.terminate();
+        currentPool = null;
+      }
+      
+      // Reset state
+      store.dispatch(actions.setStatus('idle'));
+      store.dispatch(actions.setProgress(0));
+      store.dispatch(actions.setBulkLoaded(0));
     });
   }
 
@@ -269,6 +295,14 @@ export function bindEvents(root, store) {
       }
     }
   });
+
+  // Dismiss error button (event delegation)
+  on(root, 'click', (e) => {
+    if (e.target.id === 'dismiss-error-btn') {
+      store.dispatch(actions.setError(null));
+      store.dispatch(actions.setStatus('idle'));
+    }
+  });
 }
 
 /**
@@ -328,10 +362,20 @@ async function startBulkLoadAndKmeans(store) {
 
     store.dispatch(actions.addLog(`Distribuindo ${totalPages} páginas entre ${workerCount} workers`));
 
+    // Check for cancellation before starting
+    if (store.getState().async.cancelled) {
+      pool.terminate();
+      return null;
+    }
+
     // Start all workers
     const workerPromises = [];
 
     for (let i = 0; i < workerCount; i++) {
+      // Check for cancellation
+      if (store.getState().async.cancelled) {
+        break;
+      }
       const startOffset = i * pageSize;
       const endOffset = startOffset + (pagesPerWorker * workerCount * pageSize);
 
@@ -393,8 +437,15 @@ async function startBulkLoadAndKmeans(store) {
       workerPromises.push(promise);
     }
 
-    // Wait for all workers to complete
+    // Wait for all workers to complete (with cancellation check)
     const results = await Promise.allSettled(workerPromises);
+    
+    // Check if cancelled
+    if (store.getState().async.cancelled) {
+      pool.terminate();
+      store.dispatch(actions.addLog('Carregamento cancelado'));
+      return null;
+    }
     
     const finalCount = getWriteIndex(buffers.writeIndex);
     loadEndTime = performance.now();
@@ -429,6 +480,11 @@ async function startBulkLoadAndKmeans(store) {
 
     store.dispatch(actions.addLog(`Preparando ${finalCount} cidades para K-means (k=${k})...`));
 
+    // Check for cancellation before K-means
+    if (store.getState().async.cancelled) {
+      return null;
+    }
+
     // Start K-means clustering
     kmeansStartTime = performance.now();
     store.dispatch(actions.setStatus('clustering'));
@@ -436,11 +492,21 @@ async function startBulkLoadAndKmeans(store) {
     store.dispatch(actions.addLog(`Iniciando K-means com k=${k}...`));
 
     const kmeansWorkerCount = Math.max(2, Math.min(8, workerCount));
+    
+    // Create K-means worker pool
+    const kmeansWorkerUrl = new URL('../workers/kmeansWorker.js', import.meta.url).href;
+    const kmeansPool = createWorkerPool({ size: kmeansWorkerCount, workerUrl: kmeansWorkerUrl });
+    
+    // Store K-means pool reference
+    if (onPoolCreated) {
+      onPoolCreated(kmeansPool);
+    }
 
     const kmeansResult = await runKmeans(buffers, k, {
       maxIter: 100,
       epsilon: 0.0001,
       workerCount: kmeansWorkerCount,
+      isCancelled: () => store.getState().async.cancelled,
       onProgress: (progress) => {
         const progressPercent = Math.min(100, Math.round((progress.iteration / 100) * 100));
         store.dispatch(actions.setProgress(progressPercent));
@@ -480,8 +546,22 @@ async function startBulkLoadAndKmeans(store) {
     store.dispatch(actions.addLog(`Processo concluído em ${(totalTimeMs / 1000).toFixed(2)}s total!`));
 
   } catch (error) {
-    store.dispatch(actions.setError(error.message));
+    // Check if it was a cancellation
+    if (error.message === 'K-means cancelled' || store.getState().async.cancelled) {
+      store.dispatch(actions.addLog('K-means cancelado pelo usuário'));
+      store.dispatch(actions.setStatus('idle'));
+      return null;
+    }
+    
+    // Handle other errors
+    const errorMessage = error.message || 'Erro desconhecido';
+    store.dispatch(actions.setError(errorMessage));
     store.dispatch(actions.setStatus('error'));
-    store.dispatch(actions.addLog(`Erro: ${error.message}`));
+    store.dispatch(actions.addLog(`Erro: ${errorMessage}`));
+    
+    // Keep UI functional - don't crash
+    console.error('Error during bulk load/kmeans:', error);
   }
+  
+  return null;
 }

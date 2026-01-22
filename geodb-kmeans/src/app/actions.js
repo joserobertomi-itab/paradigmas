@@ -20,6 +20,8 @@ export const ActionTypes = {
   ASYNC_SET_ERROR: 'ASYNC/SET_ERROR',
   ASYNC_CLEAR_LOGS: 'ASYNC/CLEAR_LOGS',
   ASYNC_SET_REQUEST_ID: 'ASYNC/SET_REQUEST_ID',
+  ASYNC_CANCEL: 'ASYNC/CANCEL',
+  ASYNC_RESET: 'ASYNC/RESET',
 
   // Bulk
   BULK_SET_LOADED: 'BULK/SET_LOADED',
@@ -115,6 +117,14 @@ export const setRequestId = (requestId) => ({
   payload: requestId
 });
 
+export const cancelOperation = () => ({
+  type: ActionTypes.ASYNC_CANCEL
+});
+
+export const resetAsync = () => ({
+  type: ActionTypes.ASYNC_RESET
+});
+
 // Bulk actions
 export const setBulkLoaded = (loaded) => ({
   type: ActionTypes.BULK_SET_LOADED,
@@ -169,6 +179,8 @@ export const actions = {
   setError,
   clearLogs,
   setRequestId,
+  cancelOperation,
+  resetAsync,
 
   // Bulk
   setBulkLoaded,
