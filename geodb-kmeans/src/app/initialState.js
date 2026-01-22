@@ -33,6 +33,15 @@ export const initialState = {
     k: 5,
     status: 'idle', // idle | running | done | error
     iterations: 0,
-    clusters: null
-  }
+    clusters: null,
+    metrics: {
+      loadTimeMs: 0,
+      kmeansTimeMs: 0,
+      totalTimeMs: 0,
+      workersUsed: 0
+    }
+  },
+
+  // UI filters
+  clusterFilter: null // null = show all, number = show only that cluster
 };

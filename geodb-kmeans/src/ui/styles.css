@@ -434,6 +434,183 @@ body {
   font-style: italic;
 }
 
+/* Detailed Cluster Cards */
+.cluster-card-detailed {
+  background-color: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.cluster-header {
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 2px solid #e0e0e0;
+}
+
+.cluster-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #333;
+  margin: 0;
+}
+
+.cluster-centroid {
+  margin-bottom: 1.5rem;
+}
+
+.cluster-centroid h4 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+  color: #555;
+}
+
+.centroid-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background-color: #f8f9fa;
+  border-radius: 4px;
+}
+
+.centroid-details p {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #666;
+}
+
+.cluster-cities-list h4 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+  color: #555;
+}
+
+.cities-sample {
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  padding: 0.5rem;
+}
+
+.city-sample-item {
+  display: grid;
+  grid-template-columns: 2fr 1fr auto;
+  gap: 1rem;
+  padding: 0.5rem;
+  border-bottom: 1px solid #f0f0f0;
+  align-items: center;
+}
+
+.city-sample-item:last-child {
+  border-bottom: none;
+}
+
+.city-sample-name {
+  font-weight: 500;
+  color: #333;
+}
+
+.city-sample-country {
+  font-size: 0.9rem;
+  color: #666;
+}
+
+.city-sample-pop {
+  font-size: 0.85rem;
+  color: #888;
+  text-align: right;
+}
+
+.cities-more {
+  padding: 0.75rem;
+  text-align: center;
+  font-style: italic;
+  color: #999;
+  font-size: 0.9rem;
+}
+
+/* Clusters Controls */
+.clusters-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.clusters-controls h2 {
+  margin: 0;
+  color: #333;
+  font-size: 1.5rem;
+}
+
+.clusters-filters {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.cluster-filter-select {
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 1rem;
+  background-color: #fff;
+}
+
+.clusters-list-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Metrics Panel */
+.metrics-panel {
+  background-color: #f8f9fa;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.metrics-panel h3 {
+  margin: 0 0 1rem 0;
+  font-size: 1.1rem;
+  color: #333;
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+}
+
+.metric-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.metric-label {
+  font-size: 0.85rem;
+  color: #666;
+  font-weight: 500;
+}
+
+.metric-value {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #333;
+}
+
 .page-info-text {
   font-size: 0.9rem;
   color: #666;

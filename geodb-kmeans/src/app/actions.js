@@ -28,6 +28,10 @@ export const ActionTypes = {
   KMEANS_SET_CLUSTERS: 'KMEANS/SET_CLUSTERS',
   KMEANS_SET_STATUS: 'KMEANS/SET_STATUS',
   KMEANS_SET_ITERATIONS: 'KMEANS/SET_ITERATIONS',
+  KMEANS_SET_METRICS: 'KMEANS/SET_METRICS',
+
+  // UI
+  UI_SET_CLUSTER_FILTER: 'UI/SET_CLUSTER_FILTER',
 };
 
 // Generic action creator
@@ -133,6 +137,16 @@ export const setKmeansIterations = (iterations) => ({
   payload: iterations
 });
 
+export const setKmeansMetrics = (metrics) => ({
+  type: ActionTypes.KMEANS_SET_METRICS,
+  payload: metrics
+});
+
+export const setClusterFilter = (clusterId) => ({
+  type: ActionTypes.UI_SET_CLUSTER_FILTER,
+  payload: clusterId
+});
+
 // Export all actions as an object for convenience
 export const actions = {
   // UI
@@ -163,4 +177,8 @@ export const actions = {
   setClusters,
   setKmeansStatus,
   setKmeansIterations,
+  setKmeansMetrics,
+
+  // UI
+  setClusterFilter,
 };

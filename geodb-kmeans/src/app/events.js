@@ -222,6 +222,53 @@ export function bindEvents(root, store) {
       store.dispatch(actions.clearSelected());
     });
   }
+
+  // Cluster filter (event delegation)
+  on(root, 'change', (e) => {
+    if (e.target.id === 'cluster-filter-select') {
+      const value = e.target.value;
+      const filterId = value === '' ? null : parseInt(value, 10);
+      store.dispatch(actions.setClusterFilter(filterId));
+    }
+  });
+
+  // Export JSON button (event delegation)
+  on(root, 'click', (e) => {
+    if (e.target.id === 'export-json-btn') {
+      const state = store.getState();
+      const clusters = state.kmeans?.clusters;
+      const metrics = state.kmeans?.metrics;
+      const iterations = state.kmeans?.iterations;
+
+      if (clusters) {
+        const exportData = {
+          clusters: clusters.map((cluster, index) => ({
+            clusterId: index,
+            centroid: cluster.centroid,
+            size: cluster.size,
+            cities: cluster.cities
+          })),
+          metrics: {
+            ...metrics,
+            iterations
+          },
+          exportedAt: new Date().toISOString()
+        };
+
+        const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `kmeans-results-${Date.now()}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        store.dispatch(actions.addLog('Resultados exportados para JSON'));
+      }
+    }
+  });
 }
 
 /**
@@ -350,9 +397,12 @@ async function startBulkLoadAndKmeans(store) {
     const results = await Promise.allSettled(workerPromises);
     
     const finalCount = getWriteIndex(buffers.writeIndex);
+    loadEndTime = performance.now();
+    const loadTimeMs = loadEndTime - startTime;
+    
     store.dispatch(actions.setBulkLoaded(finalCount));
     store.dispatch(actions.setProgress(100));
-    store.dispatch(actions.addLog(`Carregamento concluído: ${finalCount} cidades carregadas`));
+    store.dispatch(actions.addLog(`Carregamento concluído: ${finalCount} cidades carregadas em ${(loadTimeMs / 1000).toFixed(2)}s`));
 
     // Check for errors
     const errors = results.filter(r => r.status === 'rejected');
@@ -380,6 +430,7 @@ async function startBulkLoadAndKmeans(store) {
     store.dispatch(actions.addLog(`Preparando ${finalCount} cidades para K-means (k=${k})...`));
 
     // Start K-means clustering
+    kmeansStartTime = performance.now();
     store.dispatch(actions.setStatus('clustering'));
     store.dispatch(actions.setProgress(0));
     store.dispatch(actions.addLog(`Iniciando K-means com k=${k}...`));
@@ -402,21 +453,31 @@ async function startBulkLoadAndKmeans(store) {
       }
     });
 
-    store.dispatch(actions.addLog(`K-means concluído em ${kmeansResult.iterations} iterações`));
+    kmeansEndTime = performance.now();
+    const kmeansTimeMs = kmeansEndTime - kmeansStartTime;
+    const totalTimeMs = kmeansEndTime - startTime;
+
+    store.dispatch(actions.addLog(`K-means concluído em ${kmeansResult.iterations} iterações em ${(kmeansTimeMs / 1000).toFixed(2)}s`));
     store.dispatch(actions.addLog(`Clusters criados: ${kmeansResult.clusters.length}`));
     
     // Log cluster sizes
     kmeansResult.clusterSizes.forEach((size, i) => {
-      store.dispatch(actions.addLog(`Cluster ${i + 1}: ${size} cidades`));
+      store.dispatch(actions.addLog(`Cluster ${i}: ${size} cidades`));
     });
 
-    // Update state with results
+    // Update state with results and metrics
     store.dispatch(actions.setClusters(kmeansResult.clusters));
     store.dispatch(actions.setKmeansIterations(kmeansResult.iterations));
     store.dispatch(actions.setKmeansStatus('done'));
+    store.dispatch(actions.setKmeansMetrics({
+      loadTimeMs,
+      kmeansTimeMs,
+      totalTimeMs,
+      workersUsed: kmeansWorkerCount
+    }));
     store.dispatch(actions.setProgress(100));
     store.dispatch(actions.setStatus('done'));
-    store.dispatch(actions.addLog(`Processo concluído!`));
+    store.dispatch(actions.addLog(`Processo concluído em ${(totalTimeMs / 1000).toFixed(2)}s total!`));
 
   } catch (error) {
     store.dispatch(actions.setError(error.message));

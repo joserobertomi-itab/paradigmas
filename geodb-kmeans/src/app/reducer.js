@@ -205,6 +205,24 @@ export function reducer(state = initialState, action) {
         }
       };
 
+    case 'KMEANS/SET_METRICS':
+      return {
+        ...state,
+        kmeans: {
+          ...state.kmeans,
+          metrics: {
+            ...state.kmeans.metrics,
+            ...action.payload
+          }
+        }
+      };
+
+    case 'UI/SET_CLUSTER_FILTER':
+      return {
+        ...state,
+        clusterFilter: action.payload
+      };
+
     default:
       return state;
   }

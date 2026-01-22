@@ -6,7 +6,8 @@ import {
   statusBadge,
   progressBar,
   logsTextarea,
-  clusterList
+  clusterList,
+  metricsPanel
 } from '../ui/templates.js';
 import {
   selectResults,
@@ -18,7 +19,10 @@ import {
   selectAsyncStatus,
   selectAsyncProgress,
   selectAsyncLogs,
-  selectKmeansClusters
+  selectKmeansClusters,
+  selectKmeansMetrics,
+  selectKmeansIterations,
+  selectClusterFilter
 } from './selectors.js';
 
 export function render(root, state) {
@@ -97,6 +101,8 @@ export function render(root, state) {
 
   // Render clusters if available
   const clusters = selectKmeansClusters(state);
+  const clusterFilter = selectClusterFilter(state);
+  
   if (clusters && clusters.length > 0) {
     // Create or update clusters container
     let clustersContainer = qs('#clusters-container', root);
@@ -107,14 +113,53 @@ export function render(root, state) {
         clustersContainer = document.createElement('div');
         clustersContainer.id = 'clusters-container';
         clustersContainer.className = 'clusters-container';
-        clustersContainer.innerHTML = '<h2>Clusters</h2><div id="clusters-list"></div>';
+        
+        // Create controls
+        const controlsHTML = `
+          <div class="clusters-controls">
+            <h2>Clusters</h2>
+            <div class="clusters-filters">
+              <label for="cluster-filter-select">Filtrar por cluster:</label>
+              <select id="cluster-filter-select" class="cluster-filter-select">
+                <option value="">Todos</option>
+                ${clusters.map((_, i) => `<option value="${i}">Cluster ${i}</option>`).join('')}
+              </select>
+              <button id="export-json-btn" class="btn btn-secondary">Exportar JSON</button>
+            </div>
+          </div>
+          <div id="clusters-list"></div>
+        `;
+        clustersContainer.innerHTML = controlsHTML;
         processingSection.appendChild(clustersContainer);
       }
     }
     
+    // Update filter select value
+    const filterSelect = qs('#cluster-filter-select', clustersContainer);
+    if (filterSelect) {
+      filterSelect.value = clusterFilter === null ? '' : clusterFilter.toString();
+    }
+    
+    // Render clusters list with filter
     const clustersListEl = qs('#clusters-list', clustersContainer);
     if (clustersListEl) {
-      setHTML(clustersListEl, clusterList(clusters));
+      // Use requestAnimationFrame for non-blocking render
+      requestAnimationFrame(() => {
+        setHTML(clustersListEl, clusterList(clusters, clusterFilter));
+      });
+    }
+
+    // Render metrics panel
+    const metrics = selectKmeansMetrics(state);
+    const iterations = selectKmeansIterations(state);
+    if (metrics) {
+      let metricsEl = qs('#metrics-panel', clustersContainer);
+      if (!metricsEl) {
+        metricsEl = document.createElement('div');
+        metricsEl.id = 'metrics-panel';
+        clustersContainer.insertBefore(metricsEl, clustersListEl);
+      }
+      setHTML(metricsEl, metricsPanel({ ...metrics, iterations }));
     }
   } else {
     // Remove clusters container if no clusters

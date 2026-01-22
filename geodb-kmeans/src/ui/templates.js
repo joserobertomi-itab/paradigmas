@@ -85,33 +85,114 @@ export function logsTextarea(logs) {
   return logs.join('\n');
 }
 
-// Cluster list template
-export function clusterList(clusters) {
+// Cluster card template (detailed)
+export function clusterCard(cluster, index, isVisible = true) {
+  if (!cluster) return '';
+  
+  const centroid = cluster.centroid || {};
+  const cities = cluster.cities || [];
+  const size = cluster.size || cities.length;
+  const displayStyle = isVisible ? '' : 'display: none;';
+
+  const centroidLat = centroid.latitude?.toFixed(4) || 'N/A';
+  const centroidLon = centroid.longitude?.toFixed(4) || 'N/A';
+  const centroidPop = centroid.population ? Math.round(centroid.population).toLocaleString() : 'N/A';
+
+  // Limit sample to 30 cities for performance
+  const sampleCities = cities.slice(0, 30);
+  const remainingCount = cities.length > 30 ? cities.length - 30 : 0;
+
+  return `
+    <div class="cluster-card-detailed" data-cluster-id="${index}" style="${displayStyle}">
+      <div class="cluster-header">
+        <h3 class="cluster-title">Cluster ${index} (n=${size})</h3>
+      </div>
+      <div class="cluster-centroid">
+        <h4>Centroide</h4>
+        <div class="centroid-details">
+          <p><strong>Latitude:</strong> ${centroidLat}</p>
+          <p><strong>Longitude:</strong> ${centroidLon}</p>
+          <p><strong>População:</strong> ${centroidPop}</p>
+        </div>
+      </div>
+      <div class="cluster-cities-list">
+        <h4>Cidades (amostra)</h4>
+        <div class="cities-sample">
+          ${sampleCities.length > 0 
+            ? sampleCities.map(city => `
+                <div class="city-sample-item">
+                  <span class="city-sample-name">${escapeHtml(city.name || 'Unknown')}</span>
+                  <span class="city-sample-country">${escapeHtml(city.country || 'Unknown')}</span>
+                  <span class="city-sample-pop">${city.population ? city.population.toLocaleString() : 'N/A'}</span>
+                </div>
+              `).join('')
+            : '<div class="empty-state">Nenhuma cidade na amostra</div>'
+          }
+          ${remainingCount > 0 ? `<div class="cities-more">+${remainingCount} mais cidades neste cluster</div>` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// Cluster list template (with filter support)
+export function clusterList(clusters, filterId = null) {
   if (!clusters || !Array.isArray(clusters) || clusters.length === 0) {
     return '<div class="empty-state">Nenhum cluster disponível</div>';
   }
 
-  return clusters.map((cluster, index) => {
-    const centroid = cluster.centroid || {};
-    const cities = cluster.cities || [];
-    const cityCount = cities.length;
-    
-    return `
-      <div class="cluster-card" data-cluster-id="${index}">
-        <h3 class="cluster-title">Cluster ${index + 1}</h3>
-        <div class="cluster-info">
-          <p><strong>Centroide:</strong> Lat: ${centroid.latitude?.toFixed(4) || 'N/A'}, Lon: ${centroid.longitude?.toFixed(4) || 'N/A'}</p>
-          <p><strong>Cidades:</strong> ${cityCount}</p>
+  // Render clusters using document fragments for performance
+  const fragment = document.createDocumentFragment();
+  const container = document.createElement('div');
+  container.className = 'clusters-list-container';
+
+  clusters.forEach((cluster, index) => {
+    const isVisible = filterId === null || filterId === index;
+    const cardHTML = clusterCard(cluster, index, isVisible);
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = cardHTML;
+    container.appendChild(tempDiv.firstElementChild);
+  });
+
+  return container.outerHTML;
+}
+
+// Metrics panel template
+export function metricsPanel(metrics) {
+  if (!metrics) return '';
+
+  const formatTime = (ms) => {
+    if (ms < 1000) return `${ms.toFixed(0)}ms`;
+    return `${(ms / 1000).toFixed(2)}s`;
+  };
+
+  return `
+    <div class="metrics-panel">
+      <h3>Métricas</h3>
+      <div class="metrics-grid">
+        <div class="metric-item">
+          <span class="metric-label">Tempo de carregamento:</span>
+          <span class="metric-value">${formatTime(metrics.loadTimeMs || 0)}</span>
         </div>
-        <div class="cluster-cities">
-          ${cities.slice(0, 10).map(city => 
-            `<span class="cluster-city-tag">${escapeHtml(city.name || 'Unknown')}</span>`
-          ).join('')}
-          ${cityCount > 10 ? `<span class="cluster-city-more">+${cityCount - 10} mais</span>` : ''}
+        <div class="metric-item">
+          <span class="metric-label">Tempo K-means:</span>
+          <span class="metric-value">${formatTime(metrics.kmeansTimeMs || 0)}</span>
+        </div>
+        <div class="metric-item">
+          <span class="metric-label">Tempo total:</span>
+          <span class="metric-value">${formatTime(metrics.totalTimeMs || 0)}</span>
+        </div>
+        <div class="metric-item">
+          <span class="metric-label">Iterações:</span>
+          <span class="metric-value">${metrics.iterations || 0}</span>
+        </div>
+        <div class="metric-item">
+          <span class="metric-label">Workers usados:</span>
+          <span class="metric-value">${metrics.workersUsed || 0}</span>
         </div>
       </div>
-    `;
-  }).join('');
+    </div>
+  `;
 }
 
 // Helper: escape HTML

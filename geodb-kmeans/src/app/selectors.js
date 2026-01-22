@@ -104,6 +104,14 @@ export function selectKmeansClusters(state) {
   return state.kmeans?.clusters || null;
 }
 
+export function selectKmeansMetrics(state) {
+  return state.kmeans?.metrics || null;
+}
+
+export function selectClusterFilter(state) {
+  return state.clusterFilter !== undefined ? state.clusterFilter : null;
+}
+
 // Computed selectors
 export function selectCurrentPageInfo(state) {
   return {
