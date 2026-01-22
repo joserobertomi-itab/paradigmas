@@ -1,8 +1,10 @@
 import { qs, on } from '../ui/dom.js';
 import * as actions from './actions.js';
-import { selectK, selectQuery, selectSort, selectPage, selectPageSize } from './selectors.js';
+import { selectK, selectQuery, selectSort, selectPage, selectPageSize, selectBulkTotalTarget } from './selectors.js';
 import { findCities } from '../api/geodbClient.js';
 import { pageToOffset } from '../api/paging.js';
+import { createSharedCityBuffers, getAllCities, getWriteIndex } from '../workers/sharedMemory.js';
+import { createWorkerPool } from '../workers/workerPool.js';
 
 /**
  * Fetch cities from API with race condition prevention
@@ -171,12 +173,8 @@ export function bindEvents(root, store) {
   // Process button
   const processBtn = qs('#process-btn', root);
   if (processBtn) {
-    on(processBtn, 'click', () => {
-      const state = store.getState();
-      const k = selectK(state);
-      store.dispatch(actions.setStatus('loading'));
-      // TODO: Call bulk load + kmeans service
-      store.dispatch(actions.addLog(`Iniciando processamento com k=${k}...`));
+    on(processBtn, 'click', async () => {
+      await startBulkLoadAndKmeans(store);
     });
   }
 
@@ -222,5 +220,175 @@ export function bindEvents(root, store) {
     on(clearSelectedBtn, 'click', () => {
       store.dispatch(actions.clearSelected());
     });
+  }
+}
+
+/**
+ * Start bulk load and K-means clustering
+ */
+async function startBulkLoadAndKmeans(store) {
+  const state = store.getState();
+  const k = selectK(state);
+  const totalTarget = selectBulkTotalTarget(state);
+  const sort = selectSort(state);
+  const apiKey = import.meta.env.VITE_RAPIDAPI_KEY;
+  const apiHost = import.meta.env.VITE_RAPIDAPI_HOST || 'wft-geo-db.p.rapidapi.com';
+
+  if (!apiKey) {
+    store.dispatch(actions.setError('API key não configurada. Configure VITE_RAPIDAPI_KEY no .env'));
+    store.dispatch(actions.setStatus('error'));
+    return;
+  }
+
+  // Check SharedArrayBuffer support
+  if (typeof SharedArrayBuffer === 'undefined') {
+    store.dispatch(actions.setError('SharedArrayBuffer não disponível. Use HTTPS ou localhost.'));
+    store.dispatch(actions.setStatus('error'));
+    return;
+  }
+
+  try {
+    store.dispatch(actions.setStatus('loading'));
+    store.dispatch(actions.clearLogs());
+    store.dispatch(actions.addLog(`Iniciando carregamento massivo de ~${totalTarget} cidades...`));
+    store.dispatch(actions.setProgress(0));
+    store.dispatch(actions.setBulkLoaded(0));
+
+    // Determine number of workers (use hardware concurrency - 1, min 2, max 8)
+    const hardwareConcurrency = navigator.hardwareConcurrency || 4;
+    const workerCount = Math.max(2, Math.min(8, hardwareConcurrency - 1));
+    
+    store.dispatch(actions.addLog(`Usando ${workerCount} workers paralelos`));
+
+    // Create shared buffers
+    const buffers = createSharedCityBuffers(totalTarget);
+    store.dispatch(actions.addLog(`Buffers compartilhados criados (capacidade: ${totalTarget})`));
+
+    // Create worker pool
+    const workerUrl = new URL('../workers/fetchWorker.js', import.meta.url).href;
+    const pool = createWorkerPool({ size: workerCount, workerUrl });
+
+    // Calculate parameters
+    const pageSize = 50; // API limit per page
+    const sortParam = sort.includes(':') ? sort.split(':')[0] : 
+                     sort.includes('-') ? sort.split('-')[0] : sort;
+
+    // Distribute work: each worker fetches strided pages
+    // Worker i fetches: i*pageSize, (i+W)*pageSize, (i+2W)*pageSize...
+    const pagesPerWorker = Math.ceil(totalTarget / (workerCount * pageSize));
+    const totalPages = pagesPerWorker * workerCount;
+
+    store.dispatch(actions.addLog(`Distribuindo ${totalPages} páginas entre ${workerCount} workers`));
+
+    // Start all workers
+    const workerPromises = [];
+
+    for (let i = 0; i < workerCount; i++) {
+      const startOffset = i * pageSize;
+      const endOffset = startOffset + (pagesPerWorker * workerCount * pageSize);
+
+      const promise = pool.runTask(
+        {
+          workerId: i,
+          totalWorkers: workerCount,
+          pageSize,
+          startOffset,
+          endOffset,
+          apiKey,
+          apiHost,
+          sort: sortParam,
+          sharedBuffers: {
+            indexBuffer: buffers.indexBuffer,
+            writeIndex: buffers.writeIndex,
+            latBuffer: buffers.latBuffer,
+            latitudes: buffers.latitudes,
+            lonBuffer: buffers.lonBuffer,
+            longitudes: buffers.longitudes,
+            popBuffer: buffers.popBuffer,
+            populations: buffers.populations,
+            idxBuffer: buffers.idxBuffer,
+            localIndices: buffers.localIndices,
+            capacity: buffers.capacity
+          },
+          idsLocal: buffers.idsLocal
+        },
+        (update) => {
+          // Progress callback
+          const { type, payload: progress } = update;
+          
+          if (type === 'city-ids') {
+            // Map city IDs to local indices
+            for (const { slot, id } of progress.cityData) {
+              buffers.idsLocal[slot] = id;
+            }
+            return;
+          }
+          
+          if (progress.capacityExceeded) {
+            store.dispatch(actions.addLog(`Worker ${progress.workerId}: Capacidade atingida`));
+          } else if (progress.error) {
+            store.dispatch(actions.addLog(`Worker ${progress.workerId}: Erro em offset ${progress.offset}: ${progress.error}`));
+          } else {
+            const currentCount = getWriteIndex(buffers.writeIndex);
+            const progressPercent = Math.min(100, Math.round((currentCount / totalTarget) * 100));
+            
+            store.dispatch(actions.setProgress(progressPercent));
+            store.dispatch(actions.setBulkLoaded(currentCount));
+            
+            if (progress.offset && progress.offset % (pageSize * 10) === 0) {
+              store.dispatch(actions.addLog(`Progresso: ${currentCount}/${totalTarget} cidades (${progressPercent}%)`));
+            }
+          }
+        }
+      );
+
+      workerPromises.push(promise);
+    }
+
+    // Wait for all workers to complete
+    const results = await Promise.allSettled(workerPromises);
+    
+    const finalCount = getWriteIndex(buffers.writeIndex);
+    store.dispatch(actions.setBulkLoaded(finalCount));
+    store.dispatch(actions.setProgress(100));
+    store.dispatch(actions.addLog(`Carregamento concluído: ${finalCount} cidades carregadas`));
+
+    // Check for errors
+    const errors = results.filter(r => r.status === 'rejected');
+    if (errors.length > 0) {
+      store.dispatch(actions.addLog(`Aviso: ${errors.length} workers falharam`));
+    }
+
+    // Terminate pool
+    pool.terminate();
+
+    // Map IDs from local indices
+    const cities = [];
+    for (let i = 0; i < Math.min(finalCount, buffers.capacity); i++) {
+      const localIndex = buffers.localIndices[i];
+      if (localIndex >= 0 && buffers.idsLocal[localIndex]) {
+        cities.push({
+          id: buffers.idsLocal[localIndex],
+          latitude: buffers.latitudes[i],
+          longitude: buffers.longitudes[i],
+          population: buffers.populations[i]
+        });
+      }
+    }
+
+    store.dispatch(actions.addLog(`Preparando ${cities.length} cidades para K-means (k=${k})...`));
+
+    // Start K-means (will be implemented next)
+    store.dispatch(actions.setStatus('clustering'));
+    store.dispatch(actions.addLog(`K-means será implementado na próxima etapa`));
+    
+    // For now, just mark as done
+    store.dispatch(actions.setStatus('done'));
+    store.dispatch(actions.addLog(`Processo concluído!`));
+
+  } catch (error) {
+    store.dispatch(actions.setError(error.message));
+    store.dispatch(actions.setStatus('error'));
+    store.dispatch(actions.addLog(`Erro: ${error.message}`));
   }
 }
