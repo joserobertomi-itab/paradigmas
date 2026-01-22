@@ -97,6 +97,17 @@ body {
   cursor: not-allowed;
 }
 
+.btn-disabled {
+  background-color: #6c757d;
+  color: white;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.btn-disabled:hover {
+  background-color: #6c757d;
+}
+
 .btn-process {
   background-color: #28a745;
   color: white;
@@ -137,6 +148,32 @@ body {
   margin-bottom: 1rem;
   color: #333;
   font-size: 1.25rem;
+}
+
+.selected-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.selected-header h2 {
+  margin-bottom: 0;
+}
+
+.selected-info {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  font-size: 0.9rem;
+  color: #666;
+}
+
+.selected-info strong {
+  color: #333;
+  font-weight: 600;
 }
 
 .results-container {

@@ -11,6 +11,8 @@ import {
 import {
   selectResults,
   selectSelectedCities,
+  selectSelected,
+  selectSelectedCount,
   selectPage,
   selectBulkLoaded,
   selectAsyncStatus,
@@ -29,7 +31,9 @@ export function render(root, state) {
   const apiResultsContainer = qs('#api-results-container', root);
   if (apiResultsContainer) {
     const results = selectResults(state);
-    setHTML(apiResultsContainer, resultsList(results));
+    const selected = selectSelected(state);
+    const selectedIds = new Set(Object.keys(selected));
+    setHTML(apiResultsContainer, resultsList(results, selectedIds));
   }
 
   // Render selected cities
@@ -37,6 +41,13 @@ export function render(root, state) {
   if (selectedContainer) {
     const selectedCities = selectSelectedCities(state);
     setHTML(selectedContainer, selectedCitiesList(selectedCities));
+  }
+
+  // Render selected count
+  const selectedCountEl = qs('#selected-count', root);
+  if (selectedCountEl) {
+    const selectedCount = selectSelectedCount(state);
+    setText(selectedCountEl, selectedCount.toString());
   }
 
   // Render page info

@@ -215,4 +215,12 @@ export function bindEvents(root, store) {
       }
     });
   }
+
+  // Clear selected button
+  const clearSelectedBtn = qs('#clear-selected-btn', root);
+  if (clearSelectedBtn) {
+    on(clearSelectedBtn, 'click', () => {
+      store.dispatch(actions.clearSelected());
+    });
+  }
 }

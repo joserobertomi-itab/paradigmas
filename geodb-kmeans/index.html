@@ -48,7 +48,13 @@
 
         <!-- Right Column: Selected Cities -->
         <section class="column-right">
-          <h2>Cidades Selecionadas</h2>
+          <div class="selected-header">
+            <h2>Cidades Selecionadas</h2>
+            <div class="selected-info">
+              <span>Total: <strong id="selected-count">0</strong></span>
+              <button id="clear-selected-btn" class="btn btn-secondary btn-small">Limpar selecionadas</button>
+            </div>
+          </div>
           <div id="selected-cities-container" class="results-container">
             <!-- Selected cities will be rendered here -->
           </div>

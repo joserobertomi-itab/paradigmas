@@ -1,5 +1,5 @@
 // City card template
-export function cityCard(city, showAddButton = true) {
+export function cityCard(city, showAddButton = true, isSelected = false) {
   if (!city) return '';
   
   const name = city.name || 'Unknown';
@@ -8,9 +8,14 @@ export function cityCard(city, showAddButton = true) {
   const lat = city.latitude || 'N/A';
   const lon = city.longitude || 'N/A';
   
-  const buttonHTML = showAddButton
-    ? `<button class="btn btn-primary btn-small" data-action="add-city" data-city-id="${city.id}">Adicionar</button>`
-    : `<button class="btn btn-secondary btn-small" data-action="remove-city" data-city-id="${city.id}">Remover</button>`;
+  let buttonHTML;
+  if (showAddButton) {
+    const disabled = isSelected ? 'disabled' : '';
+    const disabledClass = isSelected ? 'btn-disabled' : '';
+    buttonHTML = `<button class="btn btn-primary btn-small ${disabledClass}" data-action="add-city" data-city-id="${city.id}" ${disabled}>${isSelected ? 'Já selecionada' : 'Adicionar'}</button>`;
+  } else {
+    buttonHTML = `<button class="btn btn-secondary btn-small" data-action="remove-city" data-city-id="${city.id}">Remover</button>`;
+  }
 
   return `
     <div class="city-card" data-city-id="${city.id}">
@@ -30,12 +35,12 @@ export function cityCard(city, showAddButton = true) {
 }
 
 // Results list template
-export function resultsList(cities) {
+export function resultsList(cities, selectedIds = new Set()) {
   if (!Array.isArray(cities) || cities.length === 0) {
     return '<div class="empty-state">Nenhum resultado encontrado</div>';
   }
 
-  return cities.map(city => cityCard(city, true)).join('');
+  return cities.map(city => cityCard(city, true, selectedIds.has(city.id))).join('');
 }
 
 // Selected cities list template
