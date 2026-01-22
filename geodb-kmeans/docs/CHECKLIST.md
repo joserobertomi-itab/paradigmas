@@ -176,6 +176,14 @@ Este documento verifica a implementação de todos os requisitos do trabalho.
     - Comentário explica: IDs são strings, não compartilháveis
     - Solução: `idsLocal` array normal no main thread
     - Buffer compartilhado armazena apenas índice numérico (Int32)
+    - **Nota**: Esta é a abordagem correta - SharedArrayBuffer não suporta strings diretamente
+
+- [x] **Configuração Cross-Origin Isolation (COOP/COEP)**
+  - **Arquivo**: `vite.config.js`
+  - **Evidência**: 
+    - Headers configurados: `Cross-Origin-Opener-Policy: same-origin`
+    - Headers configurados: `Cross-Origin-Embedder-Policy: require-corp`
+    - Necessário para SharedArrayBuffer funcionar em navegadores modernos
 
 **Status**: ✅ COMPLETO
 

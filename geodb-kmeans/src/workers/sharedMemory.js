@@ -15,7 +15,11 @@
 export function createSharedCityBuffers(capacity) {
   // Check if SharedArrayBuffer is available
   if (typeof SharedArrayBuffer === 'undefined') {
-    throw new Error('SharedArrayBuffer is not available. Use HTTPS or localhost.');
+    throw new Error(
+      'SharedArrayBuffer is not available. ' +
+      'Required: HTTPS or localhost + Cross-Origin Isolation headers (COOP/COEP). ' +
+      'Check vite.config.js server headers configuration.'
+    );
   }
 
   // Create SharedArrayBuffer for write index (atomic counter)

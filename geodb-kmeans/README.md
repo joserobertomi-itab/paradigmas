@@ -64,7 +64,10 @@ npm run dev
 
 5. Acesse `http://localhost:5173` no navegador
 
-**⚠️ Importante**: Para usar SharedArrayBuffer, é necessário executar em HTTPS ou localhost (requisito de segurança do navegador).
+**⚠️ Importante**: Para usar SharedArrayBuffer, é necessário:
+- Executar em HTTPS ou localhost (requisito de segurança do navegador)
+- Headers Cross-Origin Isolation (COOP/COEP) configurados no servidor
+- O arquivo `vite.config.js` já está configurado com esses headers automaticamente
 
 ## 📁 Onde Estão os Conceitos Implementados
 
