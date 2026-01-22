@@ -1,24 +1,35 @@
-# GeoDB K-means Clustering
+# GeoDB K-means Clustering - Trabalho de Paradigmas de Programação
 
-Aplicação web para carregamento massivo de dados de cidades da GeoDB Cities API e clustering usando K-means paralelizado com Web Workers e SharedArrayBuffer.
+## 📋 Objetivo do Trabalho
 
-## 🚀 Funcionalidades
+Este projeto implementa uma aplicação web completa para análise de dados geográficos utilizando múltiplos paradigmas de programação:
 
-- **Busca e Paginação**: Busca cidades por nome com paginação assíncrona
-- **Seleção de Cidades**: Seleciona cidades para análise
-- **Carregamento Massivo Paralelo**: Carrega ~10.000 cidades usando múltiplos Web Workers
-- **K-means Paralelizado**: Clustering usando K-means com processamento paralelo
-- **Visualização de Clusters**: Visualiza resultados com métricas e amostras
-- **Exportação**: Exporta resultados em JSON
-- **Cancelamento**: Cancela operações em andamento
+- **Programação Funcional**: Reducers puros, funções imutáveis, composição
+- **Programação Assíncrona**: Promises, async/await, callbacks
+- **Concorrência e Paralelismo**: Web Workers, SharedArrayBuffer, processamento paralelo
+- **Arquitetura Declarativa**: Renderização baseada em estado, separação de responsabilidades
 
-## 📋 Pré-requisitos
+### Requisitos Atendidos
+
+✅ **Consumo assíncrono de API** com tratamento de erros e rate limiting  
+✅ **Paginação assíncrona** com prevenção de race conditions  
+✅ **Carregamento massivo paralelo** (~10.000 registros) usando Web Workers  
+✅ **Memória compartilhada** via SharedArrayBuffer para eficiência  
+✅ **K-means paralelizado** com padrão Map/Reduce  
+✅ **UI reativa** sem frameworks, renderização declarativa  
+✅ **Store funcional** estilo Redux sem dependências externas  
+✅ **Tratamento robusto de erros** mantendo UI funcional  
+✅ **Cancelamento de operações** com cleanup adequado  
+
+## 🚀 Como Rodar
+
+### Pré-requisitos
 
 - Node.js 20.19+ ou 22.12+
 - npm ou yarn
 - Chave da API RapidAPI (GeoDB Cities)
 
-## 🔧 Instalação
+### Instalação
 
 1. Clone o repositório:
 ```bash
@@ -32,16 +43,19 @@ npm install
 ```
 
 3. Configure as variáveis de ambiente:
+
 Crie um arquivo `.env` na raiz do projeto:
-```
-VITE_RAPIDAPI_KEY=sua_chave_aqui
+```env
+VITE_RAPIDAPI_KEY=sua_chave_rapidapi_aqui
 VITE_RAPIDAPI_HOST=wft-geo-db.p.rapidapi.com
 ```
 
-Para obter uma chave da API:
+**Como obter a chave da API:**
 1. Acesse [RapidAPI GeoDB Cities](https://rapidapi.com/wirefreethought/api/geodb-cities)
-2. Inscreva-se e obtenha sua chave
-3. Adicione a chave no arquivo `.env`
+2. Crie uma conta gratuita
+3. Inscreva-se no plano básico (gratuito)
+4. Copie sua chave da API
+5. Cole no arquivo `.env`
 
 4. Inicie o servidor de desenvolvimento:
 ```bash
@@ -50,178 +64,580 @@ npm run dev
 
 5. Acesse `http://localhost:5173` no navegador
 
-**Nota**: Para usar SharedArrayBuffer, é necessário executar em HTTPS ou localhost.
+**⚠️ Importante**: Para usar SharedArrayBuffer, é necessário executar em HTTPS ou localhost (requisito de segurança do navegador).
+
+## 📁 Onde Estão os Conceitos Implementados
+
+### 1. Consumo Assíncrono
+
+**Localização**: `src/api/geodbClient.js`, `src/app/events.js`
+
+**Implementação**:
+- Uso de `async/await` para operações assíncronas
+- Promises para gerenciar fluxo assíncrono
+- Callbacks de progresso para atualização em tempo real
+
+**Exemplo**:
+```javascript
+// src/app/events.js - fetchCities()
+async function fetchCities(store, page, query, sort) {
+  store.dispatch(actions.setStatus('loading'));
+  try {
+    const result = await findCities({ namePrefix: query, sort, offset, limit });
+    store.dispatch(actions.setResultsWithId(result.data, newRequestId));
+  } catch (error) {
+    store.dispatch(actions.setError(error.message));
+  }
+}
+```
+
+**Características**:
+- Tratamento de erros com try/catch
+- Race condition prevention via requestId
+- Atualização de UI durante operações assíncronas
+
+### 2. Concorrência vs Paralelismo
+
+**Concorrência** (coordenada, single-threaded):
+- **Localização**: `src/app/events.js` - paginação assíncrona
+- Múltiplas requisições coordenadas no mesmo thread
+- Gerenciamento via event loop e Promises
+- Rate limiting para coordenar requisições
+
+**Paralelismo** (verdadeiro, multi-threaded):
+- **Localização**: `src/workers/` - Web Workers
+- Múltiplos threads processando simultaneamente
+- Workers independentes com SharedArrayBuffer
+- Processamento verdadeiramente paralelo
+
+**Comparação**:
+
+| Aspecto | Concorrência | Paralelismo |
+|---------|-------------|-------------|
+| Threads | 1 (event loop) | Múltiplos (workers) |
+| Execução | Alternada | Simultânea |
+| Uso | Paginação, UI | Carregamento massivo, K-means |
+| Memória | Compartilhada (normal) | Compartilhada (SAB) |
+
+### 3. Web Workers
+
+**Localização**: `src/workers/fetchWorker.js`, `src/workers/kmeansWorker.js`
+
+**Implementação**:
+
+**Fetch Worker** (`fetchWorker.js`):
+- Busca páginas de cidades em paralelo
+- Padrão strided (intercalado) para distribuição
+- Rate limiting por worker
+- Escrita atômica em SharedArrayBuffer
+
+**K-means Worker** (`kmeansWorker.js`):
+- Processa blocos de pontos
+- Calcula distâncias e atribui clusters
+- Retorna somas parciais (Map phase)
+- Não compartilha estado entre workers
+
+**Worker Pool** (`workerPool.js`):
+- Gerencia pool de workers
+- Distribuição round-robin de tarefas
+- Callbacks de progresso
+- Terminação e cleanup
+
+**Exemplo de uso**:
+```javascript
+// src/app/events.js
+const pool = createWorkerPool({ size: workerCount, workerUrl });
+const promise = pool.runTask(payload, (progress) => {
+  // Callback de progresso
+});
+```
+
+### 4. Memória Compartilhada
+
+**Localização**: `src/workers/sharedMemory.js`
+
+**Implementação**:
+- `SharedArrayBuffer` para arrays numéricos (lat, lon, pop)
+- `Int32Array` para índice atômico (writeIndex)
+- Operações atômicas via `Atomics.add()` para evitar race conditions
+- Array normal (`idsLocal`) para strings (não compartilhável)
+
+**Estrutura**:
+```javascript
+{
+  indexBuffer: SharedArrayBuffer,      // Contador atômico
+  latBuffer: SharedArrayBuffer,        // Float64Array
+  lonBuffer: SharedArrayBuffer,        // Float64Array
+  popBuffer: SharedArrayBuffer,        // Float64Array
+  idxBuffer: SharedArrayBuffer,        // Int32Array (índices locais)
+  idsLocal: Array                      // Strings (main thread only)
+}
+```
+
+**Decisão de Design**:
+- IDs da API são strings, mas SharedArrayBuffer requer tipos numéricos
+- Solução: armazenar índice numérico no buffer, mapear IDs em array normal
+- Permite escrita paralela eficiente mantendo referência a IDs originais
+
+**Operações Atômicas**:
+```javascript
+// Alocação de slot atômica
+function allocateSlot(writeIndex) {
+  return Atomics.add(writeIndex, 0, 1); // Retorna valor anterior
+}
+```
+
+### 5. Programação Funcional
+
+**Localização**: `src/app/reducer.js`, `src/kmeans/`, `src/app/selectors.js`
+
+#### Reducers Puros
+
+**Exemplo**: `src/app/reducer.js`
+```javascript
+export function reducer(state = initialState, action) {
+  switch (action.type) {
+    case 'DATA/ADD_SELECTED': {
+      const city = action.payload;
+      // Não muta estado original
+      return {
+        ...state,
+        selected: {
+          ...state.selected,  // Spread operator
+          [city.id]: city
+        },
+        selectedOrder: [...state.selectedOrder, city.id]  // Novo array
+      };
+    }
+  }
+}
+```
+
+**Características**:
+- Sem efeitos colaterais
+- Semmutação (sempre retorna novo estado)
+- Função pura (mesma entrada = mesma saída)
+- Composable (pode combinar reducers)
+
+#### Funções Puras
+
+**Exemplo**: `src/kmeans/distance.js`
+```javascript
+export function euclideanDistance(point1, point2, normalization = null) {
+  // Sem efeitos colaterais
+  // Sem dependências externas
+  // Determinística
+  const dLat = point1.latitude - point2.latitude;
+  const dLon = point1.longitude - point2.longitude;
+  const dPop = point1.population - point2.population;
+  return Math.sqrt(dLat * dLat + dLon * dLon + dPop * dPop);
+}
+```
+
+**Outros exemplos**:
+- `src/kmeans/math.js`: `mean()`, `variance()` - funções matemáticas puras
+- `src/app/selectors.js`: Selectors derivam dados sem mutar estado
+- `src/ui/templates.js`: Templates são funções puras que retornam HTML
+
+#### Composição de Funções
+
+**Exemplo**: `src/app/selectors.js`
+```javascript
+export function selectSelectedCities(state) {
+  const selected = selectSelected(state);      // Composição
+  const order = selectSelectedOrder(state);    // Composição
+  return order.map(id => selected[id]).filter(Boolean);  // Pipeline funcional
+}
+```
+
+### 6. Implementação do K-means
+
+**Localização**: `src/kmeans/kmeans.js`, `src/workers/kmeansWorker.js`
+
+#### Passo a Passo
+
+**1. Inicialização** (`src/kmeans/init.js`):
+```javascript
+// Seleciona k pontos aleatórios como centroides iniciais
+centroids = randomInit(data, k, seed);
+```
+
+**2. Loop Principal** (`src/kmeans/kmeans.js`):
+
+**a) Map Phase (paralelo)**:
+- Divide pontos entre workers
+- Cada worker processa seu bloco
+- Para cada ponto: encontra cluster mais próximo
+- Acumula somas parciais: `sumLat[k]`, `sumLon[k]`, `sumPop[k]`, `count[k]`
+
+**b) Reduce Phase (main thread)**:
+- Combina somas parciais de todos os workers
+- Calcula novos centroides: `centroid[k] = sum[k] / count[k]`
+- Atualiza centroides
+
+**c) Verificação de Convergência**:
+- Calcula mudança total dos centroides
+- Compara com threshold (epsilon)
+- Verifica se assignments são estáveis
+
+**3. Estrutura de Dados**:
+```javascript
+// Entrada (worker)
+{
+  centroids: [{lat, lon, pop}, ...],
+  startIndex: 0,
+  endIndex: 1000,
+  sharedBuffers: {...}
+}
+
+// Saída (worker)
+{
+  sumLat: [0, 0, 0, ...],  // Somas por cluster
+  sumLon: [0, 0, 0, ...],
+  sumPop: [0, 0, 0, ...],
+  counts: [0, 0, 0, ...]   // Contagens por cluster
+}
+```
+
+**4. Algoritmo Completo**:
+```
+1. Inicializar centroides aleatoriamente
+2. REPETIR até convergência:
+   a) MAP (paralelo):
+      - Worker i processa pontos [start_i, end_i]
+      - Para cada ponto: encontrar cluster mais próximo
+      - Acumular somas parciais
+   b) REDUCE (main thread):
+      - Combinar somas de todos os workers
+      - Calcular novos centroides
+   c) Verificar convergência
+3. Retornar clusters finais
+```
+
+## 🔧 Limites e Decisões Técnicas
+
+### Rate Limiting
+
+**Estratégia**: Token Bucket por Worker
+
+**Localização**: `src/api/rateLimit.js`, `src/workers/fetchWorker.js`
+
+**Implementação**:
+- Máximo 2 requisições simultâneas por worker
+- Delay base de 500ms + jitter aleatório (0-200ms)
+- Fila de requisições para evitar bloqueio
+
+**Razão**:
+- API tem limites de requisições por segundo
+- Jitter evita "thundering herd" (todos workers requisitando ao mesmo tempo)
+- Distribuição uniforme ao longo do tempo
+
+**Configuração**:
+```javascript
+const MAX_CONCURRENT_REQUESTS = 2;
+const REQUEST_DELAY_MS = 500;
+const JITTER_MS = 200;
+```
+
+### Normalização de Features
+
+**Localização**: `src/kmeans/distance.js`
+
+**Problema**:
+- Latitude: -90 a 90
+- Longitude: -180 a 180
+- População: 0 a milhões
+
+**Solução**: Normalização Min-Max
+
+```javascript
+function normalize(value, min, max) {
+  if (max === min) return 0.5;
+  return (value - min) / (max - min);  // [0, 1]
+}
+```
+
+**Aplicação**:
+- Calcula min/max do dataset (amostra de 1000 pontos)
+- Normaliza todas as features para [0, 1]
+- Aplica na distância euclidiana
+
+**Razão**:
+- População domina distância sem normalização
+- Normalização garante peso igual para todas as features
+- Melhora qualidade dos clusters
+
+### Critérios de Convergência
+
+**Localização**: `src/kmeans/kmeans.js`
+
+**Critérios** (OR lógico):
+
+1. **Mudança Média < Epsilon**:
+```javascript
+const avgChange = totalChange / k;
+converged = avgChange < epsilon;  // epsilon = 0.0001
+```
+
+2. **Assignments Estáveis**:
+```javascript
+const assignmentsStable = 
+  previousAssignments && 
+  allAssignments.every((a, i) => a === previousAssignments[i]);
+```
+
+**Parâmetros**:
+- `maxIter = 100`: Limite máximo de iterações
+- `epsilon = 0.0001`: Threshold de convergência
+
+**Razão**:
+- Dois critérios garantem convergência robusta
+- Evita loops infinitos com maxIter
+- Epsilon pequeno garante precisão
+
+### Outras Decisões
+
+**Capacidade de Buffer**: 10.000 cidades
+- Balance entre memória e performance
+- Suficiente para análise significativa
+
+**Workers**: `hardwareConcurrency - 1`
+- Deixa 1 core para UI/main thread
+- Mínimo 2, máximo 8 workers
+
+**Amostra de Cidades**: 30 por cluster
+- Evita travar UI com muitos elementos
+- Suficiente para visualização
+
+## 📊 Diagramas
+
+### Fluxo UI -> API
+
+```mermaid
+graph TD
+    A[Usuário clica Buscar] --> B[dispatch setStatus loading]
+    B --> C[Gerar requestId]
+    C --> D[findCities API]
+    D --> E{API Response}
+    E -->|Sucesso| F[dispatch setResults]
+    E -->|Erro| G[dispatch setError]
+    F --> H[render atualiza UI]
+    G --> I[render mostra erro]
+    H --> J[Status: idle]
+    I --> J
+    
+    K[Usuário navega página] --> L[dispatch setPage]
+    L --> M[fetchCities nova página]
+    M --> D
+    
+    style A fill:#e1f5ff
+    style D fill:#fff4e1
+    style F fill:#e8f5e9
+    style G fill:#ffebee
+```
+
+### Worker Pool
+
+```mermaid
+graph TD
+    A[Main Thread] --> B[Criar Worker Pool]
+    B --> C[Worker 1]
+    B --> D[Worker 2]
+    B --> E[Worker 3]
+    B --> F[Worker N]
+    
+    C --> G[Task Queue]
+    D --> G
+    E --> G
+    F --> G
+    
+    G --> H[Round-Robin Distribution]
+    H --> C
+    H --> D
+    H --> E
+    H --> F
+    
+    C --> I[Result 1]
+    D --> J[Result 2]
+    E --> K[Result 3]
+    F --> L[Result N]
+    
+    I --> M[Reduce Results]
+    J --> M
+    K --> M
+    L --> M
+    
+    M --> N[Main Thread Process]
+    
+    style A fill:#e1f5ff
+    style B fill:#fff4e1
+    style M fill:#e8f5e9
+    style N fill:#f3e5f5
+```
+
+### K-means Paralelo (Map/Reduce)
+
+```mermaid
+graph TD
+    A[Inicializar Centroides] --> B[Iteração i]
+    
+    B --> C[Map Phase - Paralelo]
+    
+    C --> D[Worker 1: Pontos 0-2500]
+    C --> E[Worker 2: Pontos 2500-5000]
+    C --> F[Worker 3: Pontos 5000-7500]
+    C --> G[Worker 4: Pontos 7500-10000]
+    
+    D --> H[Calcular Distâncias]
+    E --> H
+    F --> H
+    G --> H
+    
+    H --> I[Atribuir Clusters]
+    I --> J[Acumular Somas Parciais]
+    
+    J --> K[Reduce Phase - Main Thread]
+    
+    K --> L[Combinar Somas]
+    L --> M[Calcular Novos Centroides]
+    
+    M --> N{Convergiu?}
+    N -->|Não| B
+    N -->|Sim| O[Retornar Clusters]
+    
+    style A fill:#e1f5ff
+    style C fill:#fff4e1
+    style K fill:#e8f5e9
+    style O fill:#f3e5f5
+```
+
+### Arquitetura de Memória Compartilhada
+
+```mermaid
+graph LR
+    A[Main Thread] --> B[SharedArrayBuffer]
+    C[Worker 1] --> B
+    D[Worker 2] --> B
+    E[Worker 3] --> B
+    F[Worker N] --> B
+    
+    B --> G[Float64Array: Latitudes]
+    B --> H[Float64Array: Longitudes]
+    B --> I[Float64Array: Populations]
+    B --> J[Int32Array: Write Index]
+    
+    A --> K[Array Normal: IDs]
+    
+    style A fill:#e1f5ff
+    style B fill:#fff4e1
+    style K fill:#ffebee
+```
 
 ## 🧪 Teste Manual Guiado
 
 ### 1. Navegar Páginas
 
-1. **Inicie a aplicação** e aguarde o carregamento
-2. **Digite um nome de cidade** no campo de busca (ex: "São")
-3. **Clique em "Buscar"** ou pressione Enter
-4. **Verifique os resultados** na coluna "Resultados da API"
-5. **Clique em "Próxima página"** para ver mais resultados
-6. **Clique em "Página anterior"** para voltar
-7. **Verifique** que a página atual e total carregado são atualizados
+1. Digite "São" no campo de busca
+2. Clique em "Buscar"
+3. Verifique resultados na coluna esquerda
+4. Clique em "Próxima página"
+5. Verifique que novos resultados aparecem
+6. Clique em "Página anterior"
+7. Verifique que volta para página anterior
 
-**Resultado esperado**: 
-- Lista de cidades é exibida
-- Paginação funciona corretamente
-- Informações de página são atualizadas
+**Resultado esperado**: Paginação funciona corretamente, informações de página atualizadas.
 
 ### 2. Selecionar Cidades
 
-1. **Na lista de resultados**, clique em "Adicionar" em algumas cidades
-2. **Verifique** que as cidades aparecem na coluna "Cidades Selecionadas"
-3. **Verifique** que o contador "Total" é atualizado
-4. **Verifique** que o botão "Adicionar" fica desabilitado para cidades já selecionadas
-5. **Navegue para outra página** e volte
-6. **Verifique** que as cidades selecionadas permanecem selecionadas
-7. **Clique em "Remover"** em uma cidade selecionada
-8. **Verifique** que a cidade é removida da lista
-9. **Clique em "Limpar selecionadas"**
-10. **Verifique** que todas as cidades são removidas
+1. Clique em "Adicionar" em algumas cidades
+2. Verifique que aparecem na coluna "Cidades Selecionadas"
+3. Verifique contador "Total" atualizado
+4. Navegue para outra página e volte
+5. Verifique que seleções permanecem
+6. Clique em "Remover" em uma cidade
+7. Clique em "Limpar selecionadas"
 
-**Resultado esperado**:
-- Cidades podem ser adicionadas e removidas
-- Estado de seleção é preservado entre páginas
-- Botões refletem corretamente o estado de seleção
-- Contador é atualizado corretamente
+**Resultado esperado**: Seleção funciona, estado preservado entre páginas.
 
 ### 3. Carregar 10k Cidades
 
-1. **Configure o valor de k** no campo "k (número de clusters)" (ex: 5)
-2. **Clique em "Carregar ~10k cidades (paralelo) + Rodar K-means"**
-3. **Observe**:
+1. Configure k=5 no campo numérico
+2. Clique em "Carregar ~10k cidades..."
+3. Observe:
    - Status muda para "loading"
    - Barra de progresso atualiza
-   - Logs mostram progresso do carregamento
+   - Logs mostram progresso
    - Botão "Cancelar" aparece
-4. **Aguarde** o carregamento completar
-5. **Verifique** nos logs:
-   - Número de workers usados
-   - Progresso do carregamento
-   - Total de cidades carregadas
-   - Tempo de carregamento
+4. Aguarde conclusão (~2-5 minutos)
+5. Verifique logs: workers usados, cidades carregadas, tempo
 
-**Resultado esperado**:
-- Carregamento paralelo funciona
-- Progresso é atualizado em tempo real
-- ~10.000 cidades são carregadas
-- Métricas são exibidas
+**Resultado esperado**: ~10.000 cidades carregadas em paralelo.
 
 ### 4. Rodar K-means
 
-1. **Após o carregamento**, o K-means inicia automaticamente
-2. **Observe**:
+1. Após carregamento, K-means inicia automaticamente
+2. Observe:
    - Status muda para "clustering"
    - Logs mostram iterações
-   - Progresso atualiza
-3. **Aguarde** a convergência
-4. **Verifique** nos logs:
-   - Número de iterações
-   - Mudança média por iteração
-   - Mensagem de convergência
-   - Tempo de execução do K-means
+   - Mudança média por iteração diminui
+3. Aguarde convergência (~10-30 iterações)
+4. Verifique mensagem de convergência
 
-**Resultado esperado**:
-- K-means executa em paralelo
-- Convergência é alcançada
-- Métricas são coletadas
-- Clusters são criados
+**Resultado esperado**: K-means converge, clusters criados.
 
 ### 5. Verificar Clusters
 
-1. **Após o K-means concluir**, verifique a seção "Clusters"
-2. **Verifique** que cada cluster mostra:
-   - Número do cluster e tamanho (n=...)
-   - Coordenadas do centroide (lat/lon/pop)
-   - Lista de cidades (amostra de até 30)
-3. **Use o filtro** "Filtrar por cluster":
-   - Selecione um cluster específico
-   - Verifique que apenas aquele cluster é exibido
-   - Selecione "Todos" para ver todos novamente
-4. **Verifique o painel "Métricas"**:
-   - Tempo de carregamento 10k
-   - Tempo total do K-means
-   - Iterações
-   - Workers usados
-5. **Clique em "Exportar JSON"**
-6. **Verifique** que um arquivo JSON é baixado com:
-   - Todos os clusters
-   - Métricas
-   - Timestamp de exportação
+1. Verifique seção "Clusters"
+2. Cada cluster mostra:
+   - Número e tamanho (n=...)
+   - Coordenadas do centroide
+   - Lista de cidades (amostra)
+3. Use filtro "Filtrar por cluster"
+4. Verifique painel "Métricas"
+5. Clique em "Exportar JSON"
 
-**Resultado esperado**:
-- Clusters são exibidos corretamente
-- Filtro funciona
-- Métricas são precisas
-- Exportação funciona
+**Resultado esperado**: Clusters exibidos, filtro funciona, métricas corretas, exportação funciona.
 
 ### 6. Teste de Cancelamento
 
-1. **Inicie** o carregamento de 10k cidades
-2. **Durante o carregamento**, clique em "Cancelar"
-3. **Verifique**:
-   - Operação é interrompida
-   - Status volta para "idle"
-   - Workers são terminados
-   - Logs mostram mensagem de cancelamento
-4. **Repita** durante o K-means
+1. Inicie carregamento
+2. Durante carregamento, clique "Cancelar"
+3. Verifique: operação interrompida, status resetado
+4. Repita durante K-means
 
-**Resultado esperado**:
-- Cancelamento funciona em ambos os estágios
-- Estado é resetado corretamente
-- UI permanece funcional
+**Resultado esperado**: Cancelamento funciona em ambos os estágios.
 
-### 7. Teste de Erros
-
-1. **Desconfigure a API key** temporariamente (comente no .env)
-2. **Tente buscar** uma cidade
-3. **Verifique** que:
-   - Erro é exibido no painel de erro
-   - UI permanece funcional
-   - Botão "Fechar" remove o erro
-4. **Reconfigure** a API key e teste novamente
-
-**Resultado esperado**:
-- Erros são tratados graciosamente
-- Mensagens de erro são claras
-- UI não quebra
-
-## 🏗️ Estrutura do Projeto
+## 📚 Estrutura do Projeto
 
 ```
 geodb-kmeans/
 ├── src/
-│   ├── app/
-│   │   ├── state.js          # Store Redux-like
-│   │   ├── reducer.js        # Reducers
-│   │   ├── actions.js        # Action creators
-│   │   ├── selectors.js      # Selectors
-│   │   ├── render.js         # Renderização declarativa
-│   │   ├── events.js         # Event handlers
-│   │   ├── bootstrap.js      # Inicialização
-│   │   └── initialState.js   # Estado inicial
-│   ├── api/
-│   │   ├── geodbClient.js    # Cliente GeoDB API
-│   │   ├── rateLimit.js      # Rate limiting
-│   │   └── paging.js         # Utilitários de paginação
-│   ├── workers/
-│   │   ├── fetchWorker.js    # Worker para buscar cidades
-│   │   ├── kmeansWorker.js  # Worker para K-means
-│   │   ├── workerPool.js     # Pool de workers
-│   │   └── sharedMemory.js   # Memória compartilhada
-│   ├── kmeans/
-│   │   ├── distance.js      # Funções de distância
-│   │   ├── init.js           # Inicialização de centroides
-│   │   ├── kmeans.js         # Orquestrador K-means
-│   │   └── math.js           # Funções matemáticas
-│   ├── ui/
-│   │   ├── dom.js            # Helpers DOM
-│   │   ├── templates.js      # Templates HTML
-│   │   └── styles.css        # Estilos
-│   └── main.js               # Entry point
+│   ├── app/              # Lógica da aplicação
+│   │   ├── state.js      # Store funcional
+│   │   ├── reducer.js    # Reducers puros
+│   │   ├── actions.js    # Action creators
+│   │   ├── selectors.js  # Selectors funcionais
+│   │   ├── render.js     # Renderização declarativa
+│   │   ├── events.js      # Event handlers
+│   │   └── bootstrap.js  # Inicialização
+│   ├── api/              # Integração com API
+│   │   ├── geodbClient.js
+│   │   ├── rateLimit.js
+│   │   └── paging.js
+│   ├── workers/          # Web Workers
+│   │   ├── fetchWorker.js
+│   │   ├── kmeansWorker.js
+│   │   ├── workerPool.js
+│   │   └── sharedMemory.js
+│   ├── kmeans/           # Algoritmo K-means
+│   │   ├── distance.js
+│   │   ├── init.js
+│   │   ├── kmeans.js
+│   │   └── math.js
+│   └── ui/               # Interface
+│       ├── dom.js
+│       ├── templates.js
+│       └── styles.css
 ├── index.html
 ├── package.json
 └── README.md
@@ -229,38 +645,36 @@ geodb-kmeans/
 
 ## 🔑 Conceitos Implementados
 
-- **Store Funcional**: Mini-Redux sem dependências externas
-- **Web Workers**: Processamento paralelo em background
-- **SharedArrayBuffer**: Memória compartilhada entre threads
-- **Rate Limiting**: Controle de requisições à API
-- **Race Condition Prevention**: Request IDs para evitar condições de corrida
-- **Renderização Declarativa**: UI reativa sem frameworks
-- **Event Delegation**: Listeners eficientes
+- ✅ **Store Funcional**: Mini-Redux sem dependências
+- ✅ **Web Workers**: Processamento paralelo
+- ✅ **SharedArrayBuffer**: Memória compartilhada
+- ✅ **Rate Limiting**: Controle de requisições
+- ✅ **Race Condition Prevention**: Request IDs
+- ✅ **Renderização Declarativa**: UI reativa
+- ✅ **Programação Funcional**: Reducers, funções puras
+- ✅ **Map/Reduce**: K-means paralelizado
 
-## 📝 Scripts Disponíveis
+## 📝 Scripts
 
-- `npm run dev` - Inicia servidor de desenvolvimento
+- `npm run dev` - Servidor de desenvolvimento
 - `npm run build` - Build para produção
-- `npm run preview` - Preview do build de produção
+- `npm run preview` - Preview do build
 
 ## ⚠️ Notas Importantes
 
-1. **SharedArrayBuffer**: Requer HTTPS ou localhost (requisito de segurança do navegador)
-2. **API Rate Limits**: A API tem limites de requisições - o código implementa rate limiting
-3. **Performance**: Para grandes datasets, o carregamento pode levar alguns minutos
-4. **Workers**: O número de workers é determinado automaticamente baseado no hardware
+1. **SharedArrayBuffer**: Requer HTTPS ou localhost
+2. **API Rate Limits**: Implementado rate limiting automático
+3. **Performance**: Carregamento de 10k pode levar 2-5 minutos
+4. **Workers**: Número determinado automaticamente pelo hardware
 
 ## 🐛 Troubleshooting
 
-**Problema**: SharedArrayBuffer não disponível
-- **Solução**: Execute em HTTPS ou localhost
+**SharedArrayBuffer não disponível**: Execute em HTTPS ou localhost
 
-**Problema**: Erro de API
-- **Solução**: Verifique se `VITE_RAPIDAPI_KEY` está configurado corretamente no `.env`
+**Erro de API**: Verifique `VITE_RAPIDAPI_KEY` no `.env`
 
-**Problema**: Workers não funcionam
-- **Solução**: Verifique se está usando um navegador moderno com suporte a Web Workers
+**Workers não funcionam**: Use navegador moderno (Chrome, Firefox, Edge)
 
 ## 📄 Licença
 
-Este projeto é um trabalho acadêmico.
+Trabalho acadêmico - Paradigmas de Programação
