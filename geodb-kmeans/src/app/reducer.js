@@ -1,5 +1,64 @@
 import { initialState } from './initialState.js';
 
+/**
+ * Helper function to sort cities array by sort string
+ * @param {Array} cities - Array of city objects
+ * @param {string} sort - Sort string in format "field:order" or "field-order"
+ * @returns {Array} Sorted array of cities
+ */
+function sortCitiesBySortString(cities, sort) {
+  if (!Array.isArray(cities) || cities.length === 0 || !sort) {
+    return cities;
+  }
+
+  // Parse sort string
+  let sortField = 'population';
+  let sortOrder = 'desc';
+  
+  if (sort.includes(':')) {
+    [sortField, sortOrder] = sort.split(':');
+  } else if (sort.includes('-') && !sort.startsWith('-')) {
+    const parts = sort.split('-');
+    sortField = parts[0];
+    sortOrder = parts[1] || 'desc';
+  }
+
+  // Create sorted copy
+  const sorted = [...cities].sort((a, b) => {
+    let aValue, bValue;
+
+    switch (sortField) {
+      case 'population':
+        aValue = a.population || 0;
+        bValue = b.population || 0;
+        break;
+      case 'name':
+        aValue = (a.name || '').toLowerCase();
+        bValue = (b.name || '').toLowerCase();
+        break;
+      case 'country':
+        aValue = (a.country || '').toLowerCase();
+        bValue = (b.country || '').toLowerCase();
+        break;
+      default:
+        aValue = a.population || 0;
+        bValue = b.population || 0;
+    }
+
+    let comparison = 0;
+    if (typeof aValue === 'number' && typeof bValue === 'number') {
+      comparison = aValue - bValue;
+    } else {
+      if (aValue < bValue) comparison = -1;
+      else if (aValue > bValue) comparison = 1;
+    }
+
+    return sortOrder === 'desc' ? -comparison : comparison;
+  });
+
+  return sorted;
+}
+
 export function reducer(state = initialState, action) {
   if (!action || !action.type) {
     return state;
@@ -13,11 +72,30 @@ export function reducer(state = initialState, action) {
         query: action.payload || ''
       };
 
-    case 'UI/SET_SORT':
+    case 'UI/SET_SORT': {
+      const sort = action.payload || 'population:desc';
+      const results = state.results || [];
+      
+      // Sort existing results immediately
+      const sortedResults = sortCitiesBySortString(results, sort);
+      
+      if (import.meta.env.DEV && sortedResults.length > 0) {
+        console.log('[Reducer] Results sorted on sort change:', {
+          sort: sort,
+          count: sortedResults.length,
+          sample: sortedResults.slice(0, 3).map(c => ({
+            name: c.name,
+            population: c.population
+          }))
+        });
+      }
+      
       return {
         ...state,
-        sort: action.payload || 'population:desc'
+        sort: sort,
+        results: sortedResults
       };
+    }
 
     case 'UI/SET_PAGE':
       return {
@@ -35,19 +113,41 @@ export function reducer(state = initialState, action) {
       };
 
     // Data actions
-    case 'DATA/SET_RESULTS':
+    case 'DATA/SET_RESULTS': {
+      const results = Array.isArray(action.payload) ? action.payload : [];
+      // Sort results according to current sort preference
+      const sortedResults = sortCitiesBySortString(results, state.sort || 'population:desc');
       return {
         ...state,
-        results: Array.isArray(action.payload) ? action.payload : []
+        results: sortedResults
       };
+    }
 
     case 'DATA/SET_RESULTS_WITH_ID': {
       const { results, requestId } = action.payload;
       // Only update if this is the latest request (prevent race conditions)
       if (requestId >= state.async.requestId) {
+        // Sort results according to current sort preference
+        const currentSort = state.sort || 'population:desc';
+        const sortedResults = sortCitiesBySortString(
+          Array.isArray(results) ? results : [],
+          currentSort
+        );
+        
+        if (import.meta.env.DEV && sortedResults.length > 0) {
+          console.log('[Reducer] Results sorted after API fetch:', {
+            sort: currentSort,
+            count: sortedResults.length,
+            sample: sortedResults.slice(0, 3).map(c => ({
+              name: c.name,
+              population: c.population
+            }))
+          });
+        }
+        
         return {
           ...state,
-          results: Array.isArray(results) ? results : [],
+          results: sortedResults,
           async: {
             ...state.async,
             requestId
@@ -56,6 +156,23 @@ export function reducer(state = initialState, action) {
       }
       // Ignore stale responses
       return state;
+    }
+
+    case 'DATA/SORT_RESULTS': {
+      const sort = action.payload || state.sort || 'population:desc';
+      const results = state.results || [];
+      
+      if (results.length === 0) {
+        return state;
+      }
+
+      // Use helper function to sort
+      const sortedResults = sortCitiesBySortString(results, sort);
+
+      return {
+        ...state,
+        results: sortedResults
+      };
     }
 
     case 'DATA/ADD_SELECTED': {

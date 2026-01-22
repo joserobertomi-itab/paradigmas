@@ -9,6 +9,7 @@ export const ActionTypes = {
   // Data
   DATA_SET_RESULTS: 'DATA/SET_RESULTS',
   DATA_SET_RESULTS_WITH_ID: 'DATA/SET_RESULTS_WITH_ID',
+  DATA_SORT_RESULTS: 'DATA/SORT_RESULTS',
   DATA_ADD_SELECTED: 'DATA/ADD_SELECTED',
   DATA_REMOVE_SELECTED: 'DATA/REMOVE_SELECTED',
   DATA_CLEAR_SELECTED: 'DATA/CLEAR_SELECTED',
@@ -71,6 +72,11 @@ export const setResults = (results) => ({
 export const setResultsWithId = (results, requestId) => ({
   type: ActionTypes.DATA_SET_RESULTS_WITH_ID,
   payload: { results, requestId }
+});
+
+export const sortResults = (sort) => ({
+  type: ActionTypes.DATA_SORT_RESULTS,
+  payload: sort
 });
 
 export const addSelected = (city) => ({
@@ -168,6 +174,7 @@ export const actions = {
   // Data
   setResults,
   setResultsWithId,
+  sortResults,
   addSelected,
   removeSelected,
   clearSelected,

@@ -122,44 +122,41 @@ export function bindEvents(root, store) {
         normalizedSort = `${parts[0]}:${parts[1] || 'desc'}`;
       }
       
-      // Update state first
+      // Update sort in state (this will automatically sort existing results)
+      const currentState = store.getState();
+      const hasResults = currentState.results && currentState.results.length > 0;
+      
       store.dispatch(actions.setSort(normalizedSort));
       
-      // Get current state after update
+      // Get state after sort update
       const state = store.getState();
       const query = selectQuery(state);
-      const hasResults = state.results && state.results.length > 0;
       
       if (import.meta.env.DEV) {
-        console.log('[Sort Filter] State after update:', {
+        console.log('[Sort Filter] Changed:', {
           normalizedSort,
           query,
-          hasResults,
-          currentSort: state.sort
+          resultsCount: state.results?.length || 0,
+          sorted: hasResults ? 'Results sorted dynamically' : 'No results to sort'
         });
       }
       
-      // Always trigger search if there are results or a query
-      // This ensures the sort is applied immediately
+      // Trigger new API search to get properly sorted results from server
+      // This ensures pagination and future results are also sorted correctly
       if (query || hasResults) {
         // Reset to page 1 for new sort
         store.dispatch(actions.setPage(1));
         
         if (import.meta.env.DEV) {
-          console.log('[Sort Filter] Triggering search with sort:', normalizedSort, 'query:', query);
+          console.log('[Sort Filter] Triggering API search with sort:', normalizedSort);
         }
         
         try {
           await fetchCities(store, 1, query, normalizedSort);
         } catch (error) {
           if (import.meta.env.DEV) {
-            console.error('[Sort Filter] Search failed:', error);
+            console.error('[Sort Filter] API search failed:', error);
           }
-        }
-      } else {
-        // Even if no query/results, update the sort for future searches
-        if (import.meta.env.DEV) {
-          console.log('[Sort Filter] Sort updated to:', normalizedSort, '- will apply on next search');
         }
       }
     }
