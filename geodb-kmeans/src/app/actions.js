@@ -8,6 +8,7 @@ export const ActionTypes = {
 
   // Data
   DATA_SET_RESULTS: 'DATA/SET_RESULTS',
+  DATA_SET_RESULTS_WITH_ID: 'DATA/SET_RESULTS_WITH_ID',
   DATA_ADD_SELECTED: 'DATA/ADD_SELECTED',
   DATA_REMOVE_SELECTED: 'DATA/REMOVE_SELECTED',
   DATA_CLEAR_SELECTED: 'DATA/CLEAR_SELECTED',
@@ -18,6 +19,7 @@ export const ActionTypes = {
   ASYNC_SET_PROGRESS: 'ASYNC/SET_PROGRESS',
   ASYNC_SET_ERROR: 'ASYNC/SET_ERROR',
   ASYNC_CLEAR_LOGS: 'ASYNC/CLEAR_LOGS',
+  ASYNC_SET_REQUEST_ID: 'ASYNC/SET_REQUEST_ID',
 
   // Bulk
   BULK_SET_LOADED: 'BULK/SET_LOADED',
@@ -60,6 +62,11 @@ export const setResults = (results) => ({
   payload: results
 });
 
+export const setResultsWithId = (results, requestId) => ({
+  type: ActionTypes.DATA_SET_RESULTS_WITH_ID,
+  payload: { results, requestId }
+});
+
 export const addSelected = (city) => ({
   type: ActionTypes.DATA_ADD_SELECTED,
   payload: city
@@ -99,6 +106,11 @@ export const clearLogs = () => ({
   type: ActionTypes.ASYNC_CLEAR_LOGS
 });
 
+export const setRequestId = (requestId) => ({
+  type: ActionTypes.ASYNC_SET_REQUEST_ID,
+  payload: requestId
+});
+
 // Bulk actions
 export const setBulkLoaded = (loaded) => ({
   type: ActionTypes.BULK_SET_LOADED,
@@ -131,6 +143,7 @@ export const actions = {
 
   // Data
   setResults,
+  setResultsWithId,
   addSelected,
   removeSelected,
   clearSelected,
@@ -141,6 +154,7 @@ export const actions = {
   setProgress,
   setError,
   clearLogs,
+  setRequestId,
 
   // Bulk
   setBulkLoaded,

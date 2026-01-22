@@ -41,6 +41,23 @@ export function reducer(state = initialState, action) {
         results: Array.isArray(action.payload) ? action.payload : []
       };
 
+    case 'DATA/SET_RESULTS_WITH_ID': {
+      const { results, requestId } = action.payload;
+      // Only update if this is the latest request (prevent race conditions)
+      if (requestId >= state.async.requestId) {
+        return {
+          ...state,
+          results: Array.isArray(results) ? results : [],
+          async: {
+            ...state.async,
+            requestId
+          }
+        };
+      }
+      // Ignore stale responses
+      return state;
+    }
+
     case 'DATA/ADD_SELECTED': {
       const city = action.payload;
       if (!city || !city.id) {
@@ -93,6 +110,15 @@ export function reducer(state = initialState, action) {
           ...state.async,
           status: action.payload || 'idle',
           inFlight: action.payload === 'loading' || action.payload === 'clustering'
+        }
+      };
+
+    case 'ASYNC/SET_REQUEST_ID':
+      return {
+        ...state,
+        async: {
+          ...state.async,
+          requestId: action.payload || 0
         }
       };
 

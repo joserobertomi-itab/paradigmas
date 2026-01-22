@@ -17,6 +17,7 @@ export const initialState = {
     status: 'idle', // idle | loading | clustering | done | error
     error: null,
     inFlight: false,
+    requestId: 0, // Incremental ID to prevent race conditions
     progress: 0,
     logs: []
   },
