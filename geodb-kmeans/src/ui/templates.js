@@ -146,8 +146,27 @@ export function clusterList(clusters, filterId = null) {
   const container = document.createElement('div');
   container.className = 'clusters-list-container';
 
+  // Ensure filterId is properly typed and handle edge cases
+  let filterNum = null;
+  if (filterId !== null && filterId !== undefined && filterId !== '') {
+    const parsed = Number(filterId);
+    if (!isNaN(parsed) && parsed >= 0) {
+      filterNum = parsed;
+    }
+  }
+  
+  if (import.meta.env.DEV) {
+    console.log('[Cluster List] Filter state:', { filterId, filterNum, clustersCount: clusters.length });
+  }
+
   clusters.forEach((cluster, index) => {
-    const isVisible = filterId === null || filterId === index;
+    // Show all if filter is null, otherwise show only matching cluster
+    const isVisible = filterNum === null || filterNum === index;
+    
+    if (import.meta.env.DEV && filterNum !== null) {
+      console.log(`[Cluster List] Cluster ${index}: isVisible=${isVisible}, filterNum=${filterNum}, index=${index}`);
+    }
+    
     const cardHTML = clusterCard(cluster, index, isVisible);
     const tempDiv = document.createElement('div');
     tempDiv.innerHTML = cardHTML;

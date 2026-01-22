@@ -99,8 +99,22 @@ class FetchGeoDBClient {
         sortOrder = 'desc';
       }
       
+      // Ensure sortOrder is valid
+      if (sortOrder !== 'asc' && sortOrder !== 'desc') {
+        sortOrder = 'asc';
+      }
+      
       params.append('sort', sortParam);
       params.append('order', sortOrder);
+      
+      if (import.meta.env.DEV) {
+        console.log('[GeoDB Client] Sort params:', {
+          input: sort,
+          sortParam,
+          sortOrder,
+          finalParams: { sort: sortParam, order: sortOrder }
+        });
+      }
 
       const url = `${this.baseUrl}/cities?${params.toString()}`;
 

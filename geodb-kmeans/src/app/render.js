@@ -22,7 +22,8 @@ import {
   selectKmeansClusters,
   selectKmeansMetrics,
   selectKmeansIterations,
-  selectClusterFilter
+  selectClusterFilter,
+  selectSort
 } from './selectors.js';
 
 function escapeHtml(text) {
@@ -37,6 +38,35 @@ export function render(root, state) {
     root = document.getElementById('app');
   }
   if (!root) return;
+
+  // Update sort select value to match state (only if different to prevent event loops)
+  const sortSelect = qs('#sort-select', root);
+  if (sortSelect) {
+    const currentSort = selectSort(state);
+    // Convert "population:desc" format to "population-desc" for HTML select
+    let htmlSortValue = currentSort;
+    if (currentSort.includes(':')) {
+      htmlSortValue = currentSort.replace(':', '-');
+    } else if (!currentSort.includes('-') && !currentSort.startsWith('-')) {
+      // Handle plain "population" format
+      htmlSortValue = `${currentSort}-desc`;
+    }
+    
+    // Only update if value is different to prevent triggering change event
+    if (sortSelect.value !== htmlSortValue) {
+      // Temporarily remove event listener to prevent loop, then restore
+      const currentValue = sortSelect.value;
+      sortSelect.value = htmlSortValue;
+      
+      if (import.meta.env.DEV && currentValue !== htmlSortValue) {
+        console.log('[Render] Updated sort select:', { 
+          from: currentValue, 
+          to: htmlSortValue,
+          stateSort: currentSort 
+        });
+      }
+    }
+  }
 
   // Render API results
   const apiResultsContainer = qs('#api-results-container', root);
@@ -141,19 +171,34 @@ export function render(root, state) {
       }
     }
     
-    // Update filter select value
+    // Update filter select options and value
     const filterSelect = qs('#cluster-filter-select', clustersContainer);
     if (filterSelect) {
-      filterSelect.value = clusterFilter === null ? '' : clusterFilter.toString();
+      // Update options if clusters changed
+      const currentOptions = Array.from(filterSelect.options).map(opt => opt.value);
+      const expectedOptions = ['', ...clusters.map((_, i) => i.toString())];
+      const optionsChanged = currentOptions.length !== expectedOptions.length || 
+        currentOptions.some((val, idx) => val !== expectedOptions[idx]);
+      
+      if (optionsChanged) {
+        filterSelect.innerHTML = `
+          <option value="">Todos</option>
+          ${clusters.map((_, i) => `<option value="${i}">Cluster ${i}</option>`).join('')}
+        `;
+      }
+      
+      // Set filter value (preserve selection)
+      const filterValue = clusterFilter === null ? '' : clusterFilter.toString();
+      if (filterSelect.value !== filterValue) {
+        filterSelect.value = filterValue;
+      }
     }
     
     // Render clusters list with filter
     const clustersListEl = qs('#clusters-list', clustersContainer);
     if (clustersListEl) {
-      // Use requestAnimationFrame for non-blocking render
-      requestAnimationFrame(() => {
-        setHTML(clustersListEl, clusterList(clusters, clusterFilter));
-      });
+      // Render immediately to ensure filter is applied
+      setHTML(clustersListEl, clusterList(clusters, clusterFilter));
     }
 
     // Render metrics panel

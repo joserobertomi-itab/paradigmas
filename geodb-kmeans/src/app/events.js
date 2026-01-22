@@ -25,22 +25,24 @@ async function fetchCities(store, page, query, sort) {
   try {
     const offset = pageToOffset(page, pageSize);
     
-    // Convert sort format: "population-desc", "population:desc", or "-population" -> "population" with order "desc"
-    let sortParam = sort;
-    if (sort.includes(':')) {
-      sortParam = sort.split(':')[0];
-    } else if (sort.includes('-') && !sort.startsWith('-')) {
-      // Format: "population-desc"
-      sortParam = sort.split('-')[0];
-    } else if (sort.startsWith('-')) {
-      sortParam = sort.substring(1);
+    // Normalize sort format: convert "population-desc" to "population:desc" for consistency
+    // The API client handles both formats, but we normalize to colon format
+    let normalizedSort = sort;
+    if (sort.includes('-') && !sort.startsWith('-')) {
+      // Format: "population-desc" -> "population:desc"
+      const parts = sort.split('-');
+      normalizedSort = `${parts[0]}:${parts[1] || 'desc'}`;
+    } else if (!sort.includes(':') && !sort.includes('-')) {
+      // Format: "population" -> "population:asc" (default)
+      normalizedSort = `${sort}:asc`;
     }
+    // If already in "population:desc" format, keep it as is
 
-    store.dispatch(actions.addLog(`[Request #${newRequestId}] Parâmetros: query="${query}", sort="${sortParam}", page=${page}, offset=${offset}`));
+    store.dispatch(actions.addLog(`[Request #${newRequestId}] Parâmetros: query="${query}", sort="${normalizedSort}", page=${page}, offset=${offset}`));
 
     const result = await findCities({
       namePrefix: query || undefined,
-      sort: sortParam,
+      sort: normalizedSort, // Pass full sort string with order to API client
       offset,
       limit: pageSize
     });
@@ -103,13 +105,65 @@ export function bindEvents(root, store) {
     });
   }
 
-  // Sort select
-  const sortSelect = qs('#sort-select', root);
-  if (sortSelect) {
-    on(sortSelect, 'change', (e) => {
-      store.dispatch(actions.setSort(e.target.value));
-    });
-  }
+  // Sort select - auto-search when sort changes (using event delegation)
+  // Use event delegation to handle dynamically created elements
+  on(root, 'change', async (e) => {
+    if (e.target.id === 'sort-select') {
+      const htmlSortValue = e.target.value; // Format: "population-desc"
+      
+      if (import.meta.env.DEV) {
+        console.log('[Sort Filter] Changed to:', htmlSortValue);
+      }
+      
+      // Normalize to colon format for state: "population-desc" -> "population:desc"
+      let normalizedSort = htmlSortValue;
+      if (htmlSortValue.includes('-') && !htmlSortValue.startsWith('-')) {
+        const parts = htmlSortValue.split('-');
+        normalizedSort = `${parts[0]}:${parts[1] || 'desc'}`;
+      }
+      
+      // Update state first
+      store.dispatch(actions.setSort(normalizedSort));
+      
+      // Get current state after update
+      const state = store.getState();
+      const query = selectQuery(state);
+      const hasResults = state.results && state.results.length > 0;
+      
+      if (import.meta.env.DEV) {
+        console.log('[Sort Filter] State after update:', {
+          normalizedSort,
+          query,
+          hasResults,
+          currentSort: state.sort
+        });
+      }
+      
+      // Always trigger search if there are results or a query
+      // This ensures the sort is applied immediately
+      if (query || hasResults) {
+        // Reset to page 1 for new sort
+        store.dispatch(actions.setPage(1));
+        
+        if (import.meta.env.DEV) {
+          console.log('[Sort Filter] Triggering search with sort:', normalizedSort, 'query:', query);
+        }
+        
+        try {
+          await fetchCities(store, 1, query, normalizedSort);
+        } catch (error) {
+          if (import.meta.env.DEV) {
+            console.error('[Sort Filter] Search failed:', error);
+          }
+        }
+      } else {
+        // Even if no query/results, update the sort for future searches
+        if (import.meta.env.DEV) {
+          console.log('[Sort Filter] Sort updated to:', normalizedSort, '- will apply on next search');
+        }
+      }
+    }
+  });
 
   // Search button
   const searchBtn = qs('#search-btn', root);
@@ -254,6 +308,9 @@ export function bindEvents(root, store) {
     if (e.target.id === 'cluster-filter-select') {
       const value = e.target.value;
       const filterId = value === '' ? null : parseInt(value, 10);
+      if (import.meta.env.DEV) {
+        console.log('[Cluster Filter] Changed to:', { value, filterId });
+      }
       store.dispatch(actions.setClusterFilter(filterId));
     }
   });
