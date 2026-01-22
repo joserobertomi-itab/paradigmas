@@ -3,7 +3,7 @@ export const initialState = {
   query: '',
   sort: 'population:desc',
   page: 1,
-  pageSize: 50,
+  pageSize: 10, // Free plan limit (max 10 per request)
 
   // API results (current page)
   results: [],

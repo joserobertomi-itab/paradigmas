@@ -351,7 +351,7 @@ async function startBulkLoadAndKmeans(store) {
     const pool = createWorkerPool({ size: workerCount, workerUrl });
 
     // Calculate parameters
-    const pageSize = 50; // API limit per page
+    const pageSize = 10; // Free plan limit per page
     const sortParam = sort.includes(':') ? sort.split(':')[0] : 
                      sort.includes('-') ? sort.split('-')[0] : sort;
 

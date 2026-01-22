@@ -15,7 +15,7 @@ export function pageToOffset(page, pageSize = 50) {
  * @param {number} pageSize - Number of items per page
  * @returns {number} Page number (1-indexed)
  */
-export function offsetToPage(offset, pageSize = 50) {
+export function offsetToPage(offset, pageSize = 10) {
   if (offset < 0) return 1;
   return Math.floor(offset / pageSize) + 1;
 }
@@ -26,7 +26,7 @@ export function offsetToPage(offset, pageSize = 50) {
  * @param {number} pageSize - Number of items per page
  * @returns {number} Total number of pages
  */
-export function calculateTotalPages(totalItems, pageSize = 50) {
+export function calculateTotalPages(totalItems, pageSize = 10) {
   if (totalItems <= 0) return 0;
   return Math.ceil(totalItems / pageSize);
 }

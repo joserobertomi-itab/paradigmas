@@ -17,7 +17,7 @@ export function selectPage(state) {
 }
 
 export function selectPageSize(state) {
-  return state.pageSize || 50;
+  return state.pageSize || 10;
 }
 
 export function selectK(state) {

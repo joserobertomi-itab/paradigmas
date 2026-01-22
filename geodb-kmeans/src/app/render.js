@@ -188,7 +188,7 @@ export function render(root, state) {
   
   if (nextPageBtn) {
     const results = selectResults(state);
-    const pageSize = state.pageSize || 50;
+    const pageSize = state.pageSize || 10;
     nextPageBtn.disabled = results.length < pageSize;
   }
 

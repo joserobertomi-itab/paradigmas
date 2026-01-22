@@ -100,7 +100,23 @@ async function fetchCitiesPage({ apiKey, apiHost, sort, offset, limit }) {
         });
 
         if (!response.ok) {
-          throw new Error(`API error: ${response.status} ${response.statusText}`);
+          const errorText = await response.text();
+          let errorMessage = `API error: ${response.status} ${response.statusText}`;
+          
+          try {
+            const errorData = JSON.parse(errorText);
+            // Check for errors array (RapidAPI format)
+            if (errorData.errors && Array.isArray(errorData.errors) && errorData.errors.length > 0) {
+              const firstError = errorData.errors[0];
+              errorMessage = firstError.message || firstError.code || errorMessage;
+            } else {
+              errorMessage = errorData.message || errorData.error || errorMessage;
+            }
+          } catch (e) {
+            // Use default error message
+          }
+          
+          throw new Error(errorMessage);
         }
 
         const result = await response.json();

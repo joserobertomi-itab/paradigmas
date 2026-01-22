@@ -66,7 +66,7 @@ class FetchGeoDBClient {
     });
   }
 
-  async findCities({ namePrefix = '', sort = 'population', offset = 0, limit = 50 }) {
+  async findCities({ namePrefix = '', sort = 'population', offset = 0, limit = 10 }) {
     try {
       // Wait for rate limiter
       await this.rateLimiter.wait();
@@ -104,6 +104,19 @@ class FetchGeoDBClient {
 
       const url = `${this.baseUrl}/cities?${params.toString()}`;
 
+      // Debug: Log request details
+      if (import.meta.env.DEV) {
+        console.log('[GeoDB API Request]', {
+          url: url,
+          method: 'GET',
+          headers: {
+            'X-RapidAPI-Key': this.apiKey ? this.apiKey.substring(0, 10) + '...' : 'MISSING',
+            'X-RapidAPI-Host': this.apiHost
+          },
+          params: Object.fromEntries(params)
+        });
+      }
+
       const response = await fetch(url, {
         method: 'GET',
         headers: {
@@ -118,12 +131,36 @@ class FetchGeoDBClient {
         
         try {
           const errorData = JSON.parse(errorText);
-          errorMessage = errorData.message || errorData.error || errorMessage;
+          // Check for errors array (RapidAPI format)
+          if (errorData.errors && Array.isArray(errorData.errors) && errorData.errors.length > 0) {
+            const firstError = errorData.errors[0];
+            errorMessage = firstError.message || firstError.code || errorMessage;
+          } else {
+            errorMessage = errorData.message || errorData.error || errorData.details || errorMessage;
+          }
+          
+          // Include full error details in console for debugging
+          console.error('[GeoDB API Error]', {
+            status: response.status,
+            statusText: response.statusText,
+            error: errorData,
+            url: url,
+            headers: response.headers ? Object.fromEntries(response.headers.entries()) : null
+          });
         } catch (e) {
           // Use default error message
+          console.error('[GeoDB API Error]', {
+            status: response.status,
+            statusText: response.statusText,
+            rawError: errorText,
+            url: url,
+            headers: response.headers ? Object.fromEntries(response.headers.entries()) : null
+          });
         }
 
-        throw new Error(errorMessage);
+        // Include more details in error message
+        const fullErrorMessage = `${errorMessage} (Status: ${response.status})`;
+        throw new Error(fullErrorMessage);
       }
 
       const result = await response.json();
@@ -171,7 +208,7 @@ class LibraryGeoDBClient {
     });
   }
 
-  async findCities({ namePrefix = '', sort = 'population', offset = 0, limit = 50 }) {
+  async findCities({ namePrefix = '', sort = 'population', offset = 0, limit = 10 }) {
     try {
       await this.rateLimiter.wait();
 
@@ -179,7 +216,7 @@ class LibraryGeoDBClient {
       const sortOrder = sort.startsWith('-') ? 'desc' : 'asc';
 
       const params = {
-        limit: Math.min(limit, 100),
+        limit: Math.min(limit, 10), // Free plan max is 10
         offset,
         types: 'CITY'
       };
@@ -220,6 +257,16 @@ class LibraryGeoDBClient {
 export async function createGeoDBClient(options = {}) {
   const apiKey = options.apiKey || import.meta.env.VITE_RAPIDAPI_KEY;
   const apiHost = options.apiHost || import.meta.env.VITE_RAPIDAPI_HOST || 'wft-geo-db.p.rapidapi.com';
+
+  // Debug: Log environment variable status (without exposing full key)
+  if (import.meta.env.DEV) {
+    console.log('[GeoDB Client] Environment check:', {
+      hasApiKey: !!apiKey,
+      apiKeyLength: apiKey ? apiKey.length : 0,
+      apiKeyPrefix: apiKey ? apiKey.substring(0, 10) + '...' : 'missing',
+      apiHost: apiHost
+    });
+  }
 
   if (!apiKey) {
     throw new Error('GeoDB API key is required. Set VITE_RAPIDAPI_KEY in your .env file.');
