@@ -492,21 +492,17 @@ async function startBulkLoadAndKmeans(store) {
     store.dispatch(actions.addLog(`Iniciando K-means com k=${k}...`));
 
     const kmeansWorkerCount = Math.max(2, Math.min(8, workerCount));
-    
-    // Create K-means worker pool
-    const kmeansWorkerUrl = new URL('../workers/kmeansWorker.js', import.meta.url).href;
-    const kmeansPool = createWorkerPool({ size: kmeansWorkerCount, workerUrl: kmeansWorkerUrl });
-    
-    // Store K-means pool reference
-    if (onPoolCreated) {
-      onPoolCreated(kmeansPool);
-    }
 
     const kmeansResult = await runKmeans(buffers, k, {
       maxIter: 100,
       epsilon: 0.0001,
       workerCount: kmeansWorkerCount,
       isCancelled: () => store.getState().async.cancelled,
+      onPoolCreated: (pool) => {
+        if (onPoolCreated) {
+          onPoolCreated(pool);
+        }
+      },
       onProgress: (progress) => {
         const progressPercent = Math.min(100, Math.round((progress.iteration / 100) * 100));
         store.dispatch(actions.setProgress(progressPercent));

@@ -25,7 +25,8 @@ export async function kmeans(buffers, k, options = {}) {
     epsilon = 0.0001,
     workerCount = 4,
     onProgress = null,
-    isCancelled = () => false
+    isCancelled = () => false,
+    onPoolCreated = null
   } = options;
 
   const totalPoints = buffers.writeIndex[0];
@@ -64,6 +65,11 @@ export async function kmeans(buffers, k, options = {}) {
   // Create worker pool
   const workerUrl = new URL('../workers/kmeansWorker.js', import.meta.url).href;
   const pool = createWorkerPool({ size: workerCount, workerUrl });
+  
+  // Notify pool creation for cancellation support
+  if (onPoolCreated) {
+    onPoolCreated(pool);
+  }
 
   let iterations = 0;
   let converged = false;
