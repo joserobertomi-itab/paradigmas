@@ -5,6 +5,7 @@ import { findCities } from '../api/geodbClient.js';
 import { pageToOffset } from '../api/paging.js';
 import { createSharedCityBuffers, getAllCities, getWriteIndex } from '../workers/sharedMemory.js';
 import { createWorkerPool } from '../workers/workerPool.js';
+import { kmeans as runKmeans } from '../kmeans/kmeans.js';
 
 /**
  * Fetch cities from API with race condition prevention
@@ -376,13 +377,44 @@ async function startBulkLoadAndKmeans(store) {
       }
     }
 
-    store.dispatch(actions.addLog(`Preparando ${cities.length} cidades para K-means (k=${k})...`));
+    store.dispatch(actions.addLog(`Preparando ${finalCount} cidades para K-means (k=${k})...`));
 
-    // Start K-means (will be implemented next)
+    // Start K-means clustering
     store.dispatch(actions.setStatus('clustering'));
-    store.dispatch(actions.addLog(`K-means será implementado na próxima etapa`));
+    store.dispatch(actions.setProgress(0));
+    store.dispatch(actions.addLog(`Iniciando K-means com k=${k}...`));
+
+    const kmeansWorkerCount = Math.max(2, Math.min(8, workerCount));
+
+    const kmeansResult = await runKmeans(buffers, k, {
+      maxIter: 100,
+      epsilon: 0.0001,
+      workerCount: kmeansWorkerCount,
+      onProgress: (progress) => {
+        const progressPercent = Math.min(100, Math.round((progress.iteration / 100) * 100));
+        store.dispatch(actions.setProgress(progressPercent));
+        store.dispatch(actions.setKmeansIterations(progress.iteration));
+        store.dispatch(actions.addLog(`Iteração ${progress.iteration}: mudança média = ${progress.avgChange.toFixed(6)}`));
+        
+        if (progress.converged) {
+          store.dispatch(actions.addLog(`Convergência atingida!`));
+        }
+      }
+    });
+
+    store.dispatch(actions.addLog(`K-means concluído em ${kmeansResult.iterations} iterações`));
+    store.dispatch(actions.addLog(`Clusters criados: ${kmeansResult.clusters.length}`));
     
-    // For now, just mark as done
+    // Log cluster sizes
+    kmeansResult.clusterSizes.forEach((size, i) => {
+      store.dispatch(actions.addLog(`Cluster ${i + 1}: ${size} cidades`));
+    });
+
+    // Update state with results
+    store.dispatch(actions.setClusters(kmeansResult.clusters));
+    store.dispatch(actions.setKmeansIterations(kmeansResult.iterations));
+    store.dispatch(actions.setKmeansStatus('done'));
+    store.dispatch(actions.setProgress(100));
     store.dispatch(actions.setStatus('done'));
     store.dispatch(actions.addLog(`Processo concluído!`));
 
