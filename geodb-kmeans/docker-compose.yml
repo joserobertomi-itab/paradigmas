@@ -1,0 +1,22 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Build-time arguments (Vite embeds these at build time)
+        VITE_RAPIDAPI_KEY: ${VITE_RAPIDAPI_KEY:-}
+        VITE_RAPIDAPI_HOST: ${VITE_RAPIDAPI_HOST:-wft-geo-db.p.rapidapi.com}
+    container_name: geodb-kmeans-web
+    ports:
+      - "${PORT:-5173}:80"
+    environment:
+      # Runtime environment variables (if needed in the future)
+      - NODE_ENV=production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
