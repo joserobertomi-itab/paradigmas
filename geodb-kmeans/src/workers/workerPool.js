@@ -79,21 +79,13 @@ export function createWorkerPool({ size, workerUrl }) {
     currentWorkerIndex = (currentWorkerIndex + 1) % workers.length;
     activeTasks++;
 
-    // Extract transferable buffers from payload
-    const transferables = [];
-    if (task.payload.sharedBuffers) {
-      const sb = task.payload.sharedBuffers;
-      if (sb.indexBuffer) transferables.push(sb.indexBuffer);
-      if (sb.latBuffer) transferables.push(sb.latBuffer);
-      if (sb.lonBuffer) transferables.push(sb.lonBuffer);
-      if (sb.popBuffer) transferables.push(sb.popBuffer);
-      if (sb.idxBuffer) transferables.push(sb.idxBuffer);
-    }
-
+    // SharedArrayBuffer objects are automatically shared when passed via postMessage
+    // They CANNOT be in the transfer list - that causes an error
+    // Just pass the payload without a transfer list
     worker.postMessage({
       taskId: task.taskId,
       payload: task.payload
-    }, transferables.length > 0 ? transferables : undefined);
+    });
   }
 
   return {

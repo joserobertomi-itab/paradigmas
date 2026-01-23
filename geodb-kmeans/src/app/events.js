@@ -384,6 +384,7 @@ async function startBulkLoadAndKmeans(store) {
   }
 
   try {
+    const startTime = performance.now();
     store.dispatch(actions.setStatus('loading'));
     store.dispatch(actions.clearLogs());
     store.dispatch(actions.addLog(`Iniciando carregamento massivo de ~${totalTarget} cidades...`));
@@ -502,7 +503,7 @@ async function startBulkLoadAndKmeans(store) {
     }
     
     const finalCount = getWriteIndex(buffers.writeIndex);
-    loadEndTime = performance.now();
+    const loadEndTime = performance.now();
     const loadTimeMs = loadEndTime - startTime;
     
     store.dispatch(actions.setBulkLoaded(finalCount));
@@ -513,6 +514,11 @@ async function startBulkLoadAndKmeans(store) {
     const errors = results.filter(r => r.status === 'rejected');
     if (errors.length > 0) {
       store.dispatch(actions.addLog(`Aviso: ${errors.length} workers falharam`));
+      // Log error details
+      errors.forEach((error, idx) => {
+        const reason = error.reason?.message || error.reason || 'Erro desconhecido';
+        store.dispatch(actions.addLog(`  Worker ${idx + 1} falhou: ${reason}`));
+      });
     }
 
     // Terminate pool
@@ -533,6 +539,25 @@ async function startBulkLoadAndKmeans(store) {
     }
 
     store.dispatch(actions.addLog(`Preparando ${finalCount} cidades para K-means (k=${k})...`));
+    
+    // Log selected cities for clustering
+    if (cities.length > 0) {
+      const cityIds = cities.map(c => c.id);
+      const maxDisplay = 30;
+      if (cityIds.length <= maxDisplay) {
+        store.dispatch(actions.addLog(`Cidades selecionadas para clustering (${cityIds.length}): ${cityIds.join(', ')}`));
+      } else {
+        const displayedIds = cityIds.slice(0, maxDisplay);
+        store.dispatch(actions.addLog(`Cidades selecionadas para clustering (${cityIds.length}): ${displayedIds.join(', ')}... (+${cityIds.length - maxDisplay} mais)`));
+      }
+    } else {
+      store.dispatch(actions.addLog(`Nenhuma cidade disponível para clustering`));
+      // Diagnostic: check if there are any IDs in idsLocal array
+      const idsInBuffer = buffers.idsLocal.filter(id => id != null).length;
+      if (idsInBuffer > 0) {
+        store.dispatch(actions.addLog(`Diagnóstico: ${idsInBuffer} IDs encontrados em idsLocal, mas writeIndex=${finalCount}`));
+      }
+    }
 
     // Check for cancellation before K-means
     if (store.getState().async.cancelled) {
@@ -540,7 +565,7 @@ async function startBulkLoadAndKmeans(store) {
     }
 
     // Start K-means clustering
-    kmeansStartTime = performance.now();
+    const kmeansStartTime = performance.now();
     store.dispatch(actions.setStatus('clustering'));
     store.dispatch(actions.setProgress(0));
     store.dispatch(actions.addLog(`Iniciando K-means com k=${k}...`));
@@ -569,7 +594,7 @@ async function startBulkLoadAndKmeans(store) {
       }
     });
 
-    kmeansEndTime = performance.now();
+    const kmeansEndTime = performance.now();
     const kmeansTimeMs = kmeansEndTime - kmeansStartTime;
     const totalTimeMs = kmeansEndTime - startTime;
 
