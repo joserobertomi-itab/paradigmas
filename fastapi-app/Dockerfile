@@ -10,7 +10,8 @@ RUN apt-get update && apt-get install -y \
 # Install Python dependencies first (for better layer caching)
 COPY pyproject.toml ./
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir fastapi uvicorn sqlmodel alembic psycopg python-dotenv pydantic-settings
+    pip install --no-cache-dir "psycopg[binary]>=3.2.0" && \
+    pip install --no-cache-dir fastapi uvicorn sqlmodel alembic python-dotenv pydantic-settings
 
 # Copy application code
 COPY . .

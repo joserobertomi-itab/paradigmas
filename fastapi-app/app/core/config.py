@@ -36,8 +36,14 @@ class Settings(BaseSettings):
     def database_url_computed(self) -> str:
         """Retorna DATABASE_URL se fornecida, ou constrói a partir dos componentes."""
         if self.database_url:
+            # Se já usar postgresql://, substitui por postgresql+psycopg://
+            if self.database_url.startswith("postgresql://"):
+                return self.database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+            # Se já usar postgresql+psycopg://, mantém
+            if self.database_url.startswith("postgresql+psycopg://"):
+                return self.database_url
             return self.database_url
-        return f"postgresql://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        return f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
     
     @property
     def is_dev(self) -> bool:
