@@ -1,0 +1,107 @@
+# Unified Docker Compose for both FastAPI and Frontend applications
+# Environment variables can be set in:
+# - Root .env file (for VITE_RAPIDAPI_KEY, PORT)
+# - fastapi-app/.env (for database configuration)
+
+services:
+  # FastAPI Backend Services
+  db:
+    image: postgres:16-alpine
+    container_name: fastapi-db
+    env_file:
+      - fastapi-app/.env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-dbname}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-user} -d ${POSTGRES_DB:-dbname}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - paradigmas-network
+
+  api:
+    build:
+      context: ./fastapi-app
+      dockerfile: Dockerfile
+    container_name: fastapi-app
+    env_file:
+      - fastapi-app/.env
+    ports:
+      - "8000:8000"
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    volumes:
+      - ./fastapi-app:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - paradigmas-network
+
+  pgweb:
+    image: sosedoff/pgweb:latest
+    container_name: fastapi-pgweb
+    env_file:
+      - fastapi-app/.env
+    ports:
+      - "8081:8081"
+    environment:
+      PGWEB_DATABASE_URL: postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-dbname}?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["--bind=0.0.0.0", "--listen=8081"]
+    networks:
+      - paradigmas-network
+
+  # Frontend Web Application
+  web:
+    build:
+      context: ./geodb-kmeans
+      dockerfile: Dockerfile
+      args:
+        # Build-time arguments (Vite embeds these at build time)
+        # These can be set in root .env or geodb-kmeans/.env
+        VITE_RAPIDAPI_KEY: ${VITE_RAPIDAPI_KEY:-}
+        VITE_RAPIDAPI_HOST: ${VITE_RAPIDAPI_HOST:-wft-geo-db.p.rapidapi.com}
+    env_file:
+      # Try to load from root .env first, then geodb-kmeans/.env
+      - .env
+      - geodb-kmeans/.env
+    container_name: geodb-kmeans-web
+    ports:
+      - "${PORT:-5173}:80"
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - paradigmas-network
+
+volumes:
+  postgres_data:
+
+networks:
+  paradigmas-network:
+    driver: bridge
