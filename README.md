@@ -30,25 +30,35 @@ This repository contains two applications that can be run together using Docker 
 
 3. **Start all services:**
 
-   **Option 1: Using the startup script (recommended):**
    ```bash
-   ./start.sh
+   make up
    ```
 
-   Or in detached mode:
-   ```bash
-   ./start.sh -d
-   ```
+## 🛠️ Make Commands
 
-   **Option 2: Using docker-compose directly:**
-   ```bash
-   docker-compose up --build
-   ```
+| Command | Description |
+|---------|-------------|
+| `make up` | Start all services in detached mode |
+| `make down` | Stop and remove all services |
+| `make logs` | Follow logs from all services |
+| `make migrate` | Apply database migrations |
+| `make migrate-seed` | Apply migrations and import cities data from CSV |
+| `make clean` | Stop services and remove containers, volumes, and images |
+| `make help` | Show available commands |
 
-   Or run in detached mode:
-   ```bash
-   docker-compose up -d --build
-   ```
+### Common Workflows
+
+```bash
+# Start fresh with data
+make up
+make migrate-seed
+
+# View what's happening
+make logs
+
+# Full cleanup (removes database data)
+make clean
+```
 
 ### Services
 
@@ -77,12 +87,14 @@ docker-compose up
 
 ```
 paradigmas/
+├── Makefile                        # Make commands for common tasks
 ├── docker-compose.yml              # Unified compose file (root)
 ├── docker-compose.override.yml     # Optional overrides (create from .example)
 ├── .env                            # Root environment variables
 ├── fastapi-app/                    # Backend application
 │   ├── docker-compose.yml          # Standalone compose file
 │   ├── Dockerfile
+│   ├── data/worldcities.csv        # Cities data for import
 │   └── .env                        # Backend environment variables
 └── geodb-kmeans/                   # Frontend application
     ├── docker-compose.yml          # Standalone compose file
@@ -110,22 +122,22 @@ Override files are automatically loaded by docker-compose and allow you to:
 
 ```bash
 # Stop all services
-docker-compose down
+make down
 
-# Stop and remove volumes (⚠️ deletes database data)
-docker-compose down -v
+# Full cleanup - removes containers, volumes, and images (⚠️ deletes database data)
+make clean
 ```
 
 ### Viewing Logs
 
 ```bash
 # All services
-docker-compose logs -f
+make logs
 
-# Specific service
-docker-compose logs -f api
-docker-compose logs -f web
-docker-compose logs -f db
+# Specific service (using docker compose directly)
+docker compose logs -f api
+docker compose logs -f web
+docker compose logs -f db
 ```
 
 ## 📚 Documentation
