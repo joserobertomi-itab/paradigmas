@@ -104,6 +104,7 @@ docker-compose up -d
 This will start:
 - PostgreSQL database on port 5432
 - FastAPI application on port 8000
+- PgWeb (PostgreSQL web interface) on port 8081
 
 3. Run migrations:
 ```bash
@@ -114,6 +115,7 @@ docker-compose exec api alembic upgrade head
 - API: `http://localhost:8000`
 - API Documentation: `http://localhost:8000/docs`
 - Alternative API Documentation: `http://localhost:8000/redoc`
+- PgWeb (PostgreSQL Web UI): `http://localhost:8081`
 
 ### Stopping Docker Services
 

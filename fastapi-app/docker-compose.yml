@@ -44,5 +44,19 @@ services:
       - .:/app
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
+  pgweb:
+    image: sosedoff/pgweb:latest
+    container_name: fastapi-pgweb
+    env_file:
+      - .env
+    ports:
+      - "8081:8081"
+    environment:
+      PGWEB_DATABASE_URL: postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-dbname}?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["--bind=0.0.0.0", "--listen=8081"]
+
 volumes:
   postgres_data:
