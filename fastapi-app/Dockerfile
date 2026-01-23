@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
 COPY pyproject.toml ./
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir "psycopg[binary]>=3.2.0" && \
-    pip install --no-cache-dir fastapi uvicorn sqlmodel alembic python-dotenv pydantic-settings
+    pip install --no-cache-dir fastapi uvicorn sqlmodel alembic python-dotenv pydantic-settings python-multipart
 
 # Copy application code
 COPY . .

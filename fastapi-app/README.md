@@ -21,10 +21,10 @@ Este script executa automaticamente:
 1. ✅ Sobe os serviços com `docker-compose up -d`
 2. ✅ Aguarda os serviços ficarem prontos
 3. ✅ Executa as migrações (`alembic upgrade head`)
-4. ✅ Importa o arquivo `data/sample_cities.csv` (3 cidades do Japan)
+4. ✅ Importa o arquivo `data/worldcities.csv` (3 cidades do Japan)
 5. ✅ Busca e exibe as cidades do Japan via GET `/cities?country=Japan`
 
-**Arquivo de exemplo**: `data/sample_cities.csv` contém 3 cidades do Japan (Tokyo, Osaka, Yokohama)
+**Arquivo de exemplo**: `data/worldcities.csv` contém 3 cidades do Japan (Tokyo, Osaka, Yokohama)
 
 ### Passo a Passo Manual
 
@@ -48,7 +48,7 @@ docker-compose exec api alembic upgrade head
 4. **Importar cidades de exemplo**:
 ```bash
 curl -X POST "http://localhost:8000/api/v1/cities/import" \
-  -F "file=@data/sample_cities.csv"
+  -F "file=@data/worldcities.csv"
 ```
 
 5. **Buscar cidades do Japan**:
@@ -216,7 +216,7 @@ fastapi-app/
 │   ├── schemas/         # Pydantic schemas
 │   └── main.py          # FastAPI application entrypoint
 ├── data/
-│   └── sample_cities.csv # Sample CSV file with 3 cities (Japan)
+│   └── worldcities.csv # Sample CSV file with 3 cities (Japan)
 ├── scripts/
 │   └── dev_import.sh    # Development script for quick import
 ├── tests/               # Test files
@@ -261,7 +261,7 @@ Importa cidades de um arquivo CSV.
 **Exemplo**:
 ```bash
 curl -X POST "http://localhost:8000/api/v1/cities/import" \
-  -F "file=@data/sample_cities.csv"
+  -F "file=@data/worldcities.csv"
 ```
 
 #### GET `/api/v1/cities`

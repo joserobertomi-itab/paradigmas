@@ -28,13 +28,13 @@ docker-compose exec -T api alembic upgrade head
 echo -e "${BLUE}📤 Importando cidades do arquivo sample...${NC}"
 if command -v jq &> /dev/null; then
     curl -X POST "http://localhost:8000/api/v1/cities/import" \
-      -F "file=@data/sample_cities.csv" \
+      -F "file=@data/worldcities.csv" \
       -w "\n" \
       | jq '.'
 else
     echo -e "${YELLOW}⚠️  jq não encontrado, exibindo resposta sem formatação${NC}"
     curl -X POST "http://localhost:8000/api/v1/cities/import" \
-      -F "file=@data/sample_cities.csv"
+      -F "file=@data/worldcities.csv"
 fi
 
 echo -e "\n${GREEN}✅ Importação concluída!${NC}"

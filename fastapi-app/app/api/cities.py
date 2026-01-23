@@ -135,7 +135,13 @@ def upsert_cities_batch(session: Session, cities: List[Dict[str, Any]]) -> tuple
     return inserted, updated
 
 
-@router.post("/import")
+@router.post(
+    "/import",
+    summary="Import cities from CSV",
+    description="Import cities from a CSV file with upsert strategy (updates if ID exists)",
+    response_description="Import statistics with inserted, updated, skipped counts and error examples",
+    tags=["cities"]
+)
 async def import_cities(
     file: UploadFile = File(..., description="CSV file with cities data"),
     session: Session = Depends(get_session)
@@ -237,7 +243,14 @@ async def import_cities(
     }
 
 
-@router.get("", response_model=List[CityRead])
+@router.get(
+    "",
+    response_model=List[CityRead],
+    summary="List cities",
+    description="List cities with optional filters by country, with pagination support",
+    response_description="List of cities matching the criteria",
+    tags=["cities"]
+)
 async def get_cities(
     country: Optional[str] = None,
     limit: int = 100,
@@ -248,8 +261,8 @@ async def get_cities(
     Lista cidades com filtros opcionais.
     
     **Parâmetros**:
-    - country: Filtrar por nome do país (opcional)
-    - limit: Número máximo de resultados (padrão: 100)
+    - country: Filtrar por nome do país (opcional, case-insensitive, partial match)
+    - limit: Número máximo de resultados (padrão: 100, máximo: 1000)
     - offset: Número de resultados para pular (padrão: 0)
     
     **Retorno**: Lista de cidades
