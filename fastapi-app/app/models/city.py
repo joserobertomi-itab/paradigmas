@@ -1,7 +1,6 @@
 from sqlmodel import SQLModel, Field, Index, Column
-from sqlalchemy import BigInteger, String, Numeric
+from sqlalchemy import BigInteger, String, Float
 from typing import Optional
-from decimal import Decimal
 
 
 class City(SQLModel, table=True):
@@ -21,12 +20,12 @@ class City(SQLModel, table=True):
         max_length=255,
         description="Nome da cidade em ASCII"
     )
-    lat: Decimal = Field(
-        sa_column=Column(Numeric(10, 7)),
+    lat: float = Field(
+        sa_column=Column(Float),
         description="Latitude"
     )
-    lng: Decimal = Field(
-        sa_column=Column(Numeric(10, 7)),
+    lng: float = Field(
+        sa_column=Column(Float),
         description="Longitude"
     )
     country: str = Field(

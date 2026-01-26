@@ -1,6 +1,5 @@
 import csv
 import io
-from decimal import Decimal, InvalidOperation
 from typing import List, Dict, Any
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from sqlmodel import Session, select
@@ -36,13 +35,13 @@ def parse_csv_row(row: List[str], line_number: int) -> Dict[str, Any] | None:
             return {"error": f"Linha {line_number}: ID inválido: {clean_row[10] if len(clean_row) > 10 else 'N/A'}"}
         
         try:
-            lat = Decimal(clean_row[2])  # lat
-        except (ValueError, InvalidOperation, IndexError):
+            lat = float(clean_row[2])  # lat
+        except (ValueError, IndexError):
             return {"error": f"Linha {line_number}: Latitude inválida: {clean_row[2] if len(clean_row) > 2 else 'N/A'}"}
         
         try:
-            lng = Decimal(clean_row[3])  # lng
-        except (ValueError, InvalidOperation, IndexError):
+            lng = float(clean_row[3])  # lng
+        except (ValueError, IndexError):
             return {"error": f"Linha {line_number}: Longitude inválida: {clean_row[3] if len(clean_row) > 3 else 'N/A'}"}
         
         # Population pode ser vazio/null

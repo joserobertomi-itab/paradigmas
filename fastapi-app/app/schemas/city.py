@@ -1,14 +1,13 @@
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional
-from decimal import Decimal
 
 
 class CityBase(BaseModel):
     """Schema base para City"""
     city: str = Field(..., max_length=255, description="Nome da cidade")
     city_ascii: str = Field(..., max_length=255, description="Nome da cidade em ASCII")
-    lat: Decimal = Field(..., description="Latitude")
-    lng: Decimal = Field(..., description="Longitude")
+    lat: float = Field(..., description="Latitude")
+    lng: float = Field(..., description="Longitude")
     country: str = Field(..., max_length=255, description="Nome do país")
     iso2: str = Field(..., max_length=2, min_length=2, description="Código ISO 2 letras")
     iso3: str = Field(..., max_length=3, min_length=3, description="Código ISO 3 letras")
@@ -42,8 +41,8 @@ class CityUpdate(BaseModel):
     """Schema para atualização parcial de cidade"""
     city: Optional[str] = Field(None, max_length=255)
     city_ascii: Optional[str] = Field(None, max_length=255)
-    lat: Optional[Decimal] = None
-    lng: Optional[Decimal] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
     country: Optional[str] = Field(None, max_length=255)
     iso2: Optional[str] = Field(None, max_length=2, min_length=2)
     iso3: Optional[str] = Field(None, max_length=3, min_length=3)
