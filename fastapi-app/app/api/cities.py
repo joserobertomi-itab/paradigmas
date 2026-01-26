@@ -247,12 +247,13 @@ async def import_cities(
     "",
     response_model=List[CityRead],
     summary="List cities",
-    description="List cities with optional filters by country, with pagination support",
+    description="List cities with optional filters by country and city prefix, with pagination support",
     response_description="List of cities matching the criteria",
     tags=["cities"]
 )
 async def get_cities(
     country: Optional[str] = None,
+    prefix: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
     session: Session = Depends(get_session)
@@ -262,6 +263,7 @@ async def get_cities(
     
     **Parâmetros**:
     - country: Filtrar por nome do país (opcional, case-insensitive, partial match)
+    - prefix: Filtrar por prefixo do nome da cidade em ASCII (opcional, case-insensitive)
     - limit: Número máximo de resultados (padrão: 100, máximo: 1000)
     - offset: Número de resultados para pular (padrão: 0)
     
@@ -271,6 +273,9 @@ async def get_cities(
     
     if country:
         query = query.where(City.country.ilike(f"%{country}%"))
+    
+    if prefix:
+        query = query.where(City.city_ascii.ilike(f"{prefix}%"))
     
     query = query.limit(limit).offset(offset)
     
