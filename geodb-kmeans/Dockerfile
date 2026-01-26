@@ -13,12 +13,10 @@ RUN npm ci
 COPY . .
 
 # Build arguments for environment variables (Vite embeds these at build time)
-ARG VITE_RAPIDAPI_KEY
-ARG VITE_RAPIDAPI_HOST=wft-geo-db.p.rapidapi.com
+ARG VITE_API_BASE_URL=http://localhost:8000
 
 # Set environment variables for build
-ENV VITE_RAPIDAPI_KEY=${VITE_RAPIDAPI_KEY}
-ENV VITE_RAPIDAPI_HOST=${VITE_RAPIDAPI_HOST}
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 
 # Build the application
 RUN npm run build

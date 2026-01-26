@@ -75,27 +75,25 @@ async function processQueue() {
 }
 
 /**
- * Fetch cities from API with rate limiting
+ * Fetch cities from FastAPI with rate limiting
  */
-async function fetchCitiesPage({ apiKey, apiHost, sort, offset, limit }) {
+async function fetchCitiesPage({ apiBaseUrl, sort, offset, limit }) {
   return new Promise((resolve, reject) => {
     requestQueue.push(async () => {
       try {
         const params = new URLSearchParams({
           limit: limit.toString(),
-          offset: offset.toString(),
-          types: 'CITY',
-          sort: sort,
-          order: 'desc'
+          offset: offset.toString()
         });
 
-        const url = `https://${apiHost}/v1/geo/cities?${params.toString()}`;
+        // FastAPI endpoint: /api/v1/cities
+        const baseUrl = apiBaseUrl || 'http://localhost:8000';
+        const url = `${baseUrl}/api/v1/cities?${params.toString()}`;
 
         const response = await fetch(url, {
           method: 'GET',
           headers: {
-            'X-RapidAPI-Key': apiKey,
-            'X-RapidAPI-Host': apiHost
+            'Content-Type': 'application/json'
           }
         });
 
@@ -105,13 +103,7 @@ async function fetchCitiesPage({ apiKey, apiHost, sort, offset, limit }) {
           
           try {
             const errorData = JSON.parse(errorText);
-            // Check for errors array (RapidAPI format)
-            if (errorData.errors && Array.isArray(errorData.errors) && errorData.errors.length > 0) {
-              const firstError = errorData.errors[0];
-              errorMessage = firstError.message || firstError.code || errorMessage;
-            } else {
-              errorMessage = errorData.message || errorData.error || errorMessage;
-            }
+            errorMessage = errorData.detail || errorData.message || errorData.error || errorMessage;
           } catch (e) {
             // Use default error message
           }
@@ -119,7 +111,14 @@ async function fetchCitiesPage({ apiKey, apiHost, sort, offset, limit }) {
           throw new Error(errorMessage);
         }
 
-        const result = await response.json();
+        // FastAPI returns a direct array, not wrapped in {data, metadata}
+        const cities = await response.json();
+        
+        // Wrap in expected format for compatibility
+        const result = {
+          data: cities || []
+        };
+        
         resolve(result);
       } catch (error) {
         reject(error);
@@ -131,15 +130,15 @@ async function fetchCitiesPage({ apiKey, apiHost, sort, offset, limit }) {
 }
 
 /**
- * Normalize city data
+ * Normalize city data from FastAPI format
  */
 function normalizeCity(city) {
   return {
-    id: String(city.id || city.wikiDataId || city.code || ''),
-    name: city.name || '',
-    country: city.country || city.countryCode || '',
-    latitude: parseFloat(city.latitude) || 0,
-    longitude: parseFloat(city.longitude) || 0,
+    id: String(city.id || ''),
+    name: city.city_ascii || city.city || '',
+    country: city.country || '',
+    latitude: parseFloat(city.lat) || 0,
+    longitude: parseFloat(city.lng) || 0,
     population: parseInt(city.population, 10) || 0
   };
 }
@@ -152,8 +151,7 @@ self.onmessage = async function(e) {
     pageSize,
     startOffset,
     endOffset,
-    apiKey,
-    apiHost,
+    apiBaseUrl,
     sort,
     sharedBuffers,
     idsLocal
@@ -181,8 +179,7 @@ self.onmessage = async function(e) {
       try {
         // Fetch page
         const result = await fetchCitiesPage({
-          apiKey,
-          apiHost,
+          apiBaseUrl,
           sort,
           offset: currentOffset,
           limit: pageSize

@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     postgres_port: int = 5432
     
     # CORS
-    cors_origins: Union[List[str], str] = ["http://localhost:3000", "http://localhost:8000"]
+    cors_origins: Union[List[str], str] = ["http://localhost:3000", "http://localhost:8000", "http://localhost:5173"]
     
     @field_validator("cors_origins", mode="before")
     @classmethod

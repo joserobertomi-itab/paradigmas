@@ -367,14 +367,9 @@ async function startBulkLoadAndKmeans(store) {
   const k = selectK(state);
   const totalTarget = selectBulkTotalTarget(state);
   const sort = selectSort(state);
-  const apiKey = import.meta.env.VITE_RAPIDAPI_KEY;
-  const apiHost = import.meta.env.VITE_RAPIDAPI_HOST || 'wft-geo-db.p.rapidapi.com';
+  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
-  if (!apiKey) {
-    store.dispatch(actions.setError('API key não configurada. Configure VITE_RAPIDAPI_KEY no .env'));
-    store.dispatch(actions.setStatus('error'));
-    return;
-  }
+  // No API key required for local FastAPI endpoint
 
   // Check SharedArrayBuffer support
   if (typeof SharedArrayBuffer === 'undefined') {
@@ -406,7 +401,7 @@ async function startBulkLoadAndKmeans(store) {
     const pool = createWorkerPool({ size: workerCount, workerUrl });
 
     // Calculate parameters
-    const pageSize = 10; // Free plan limit per page
+    const pageSize = 100; // FastAPI supports up to 1000, using 100 for better performance
     const sortParam = sort.includes(':') ? sort.split(':')[0] : 
                      sort.includes('-') ? sort.split('-')[0] : sort;
 
@@ -441,8 +436,7 @@ async function startBulkLoadAndKmeans(store) {
           pageSize,
           startOffset,
           endOffset,
-          apiKey,
-          apiHost,
+          apiBaseUrl,
           sort: sortParam,
           sharedBuffers: {
             indexBuffer: buffers.indexBuffer,

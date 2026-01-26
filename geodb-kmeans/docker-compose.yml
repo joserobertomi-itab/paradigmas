@@ -5,8 +5,7 @@ services:
       dockerfile: Dockerfile
       args:
         # Build-time arguments (Vite embeds these at build time)
-        VITE_RAPIDAPI_KEY: ${VITE_RAPIDAPI_KEY:-}
-        VITE_RAPIDAPI_HOST: ${VITE_RAPIDAPI_HOST:-wft-geo-db.p.rapidapi.com}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
     container_name: geodb-kmeans-web
     ports:
       - "${PORT:-5173}:80"

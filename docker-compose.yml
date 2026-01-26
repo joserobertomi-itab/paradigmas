@@ -78,8 +78,7 @@ services:
       args:
         # Build-time arguments (Vite embeds these at build time)
         # These can be set in root .env or geodb-kmeans/.env
-        VITE_RAPIDAPI_KEY: ${VITE_RAPIDAPI_KEY:-}
-        VITE_RAPIDAPI_HOST: ${VITE_RAPIDAPI_HOST:-wft-geo-db.p.rapidapi.com}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://api:8000}
     env_file:
       # Try to load from root .env first, then geodb-kmeans/.env
       - .env

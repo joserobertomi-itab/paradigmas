@@ -1,2 +1,2 @@
-VITE_RAPIDAPI_KEY=sua_chave_rapidapi_aqui
-VITE_RAPIDAPI_HOST=wft-geo-db.p.rapidapi.com
+# FastAPI Backend URL
+VITE_API_BASE_URL=http://localhost:8000

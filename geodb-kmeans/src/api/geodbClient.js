@@ -35,31 +35,31 @@ async function loadLibrary() {
 
 /**
  * Normalize city data to stable format
- * @param {Object} city - Raw city data from API
+ * Maps FastAPI CityRead format to internal format
+ * @param {Object} city - Raw city data from FastAPI
  * @returns {Object} Normalized city object
  */
 function normalizeCity(city) {
   if (!city) return null;
 
   return {
-    id: String(city.id || city.wikiDataId || city.code || ''),
-    name: city.name || '',
-    country: city.country || city.countryCode || '',
-    region: city.region || city.regionCode || '',
-    latitude: parseFloat(city.latitude) || 0,
-    longitude: parseFloat(city.longitude) || 0,
+    id: String(city.id || ''),
+    name: city.city_ascii || city.city || '',
+    country: city.country || '',
+    region: city.admin_name || '',
+    latitude: parseFloat(city.lat) || 0,
+    longitude: parseFloat(city.lng) || 0,
     population: parseInt(city.population, 10) || 0
   };
 }
 
 /**
- * Fetch-based implementation (fallback)
+ * Fetch-based implementation for local FastAPI endpoint
  */
 class FetchGeoDBClient {
-  constructor(apiKey, apiHost) {
-    this.apiKey = apiKey;
-    this.apiHost = apiHost || 'wft-geo-db.p.rapidapi.com';
-    this.baseUrl = `https://${this.apiHost}/v1/geo`;
+  constructor(apiBaseUrl) {
+    this.apiBaseUrl = apiBaseUrl || 'http://localhost:8000';
+    this.baseUrl = `${this.apiBaseUrl}/api/v1/cities`;
     this.rateLimiter = createRateLimiter({
       maxTokens: 10,
       refillRate: 2 // 2 requests per second
@@ -72,61 +72,35 @@ class FetchGeoDBClient {
       await this.rateLimiter.wait();
 
       const params = new URLSearchParams({
-        limit: Math.min(limit, 100).toString(), // API max is 100
-        offset: offset.toString(),
-        types: 'CITY'
+        limit: Math.min(limit, 1000).toString(), // FastAPI max is 1000
+        offset: offset.toString()
       });
 
       if (namePrefix) {
-        params.append('namePrefix', namePrefix);
+        params.append('prefix', namePrefix); // FastAPI uses 'prefix' instead of 'namePrefix'
       }
 
-      // Sort format: "population-desc", "population:desc", "population:asc", "-population", or "population"
-      let sortParam = sort;
-      let sortOrder = 'asc';
-      
-      if (sort.includes(':')) {
-        // Format: "population:desc" or "population:asc"
-        [sortParam, sortOrder] = sort.split(':');
-      } else if (sort.includes('-') && !sort.startsWith('-')) {
-        // Format: "population-desc" or "population-asc"
-        const parts = sort.split('-');
-        sortParam = parts[0];
-        sortOrder = parts[1] || 'desc';
-      } else if (sort.startsWith('-')) {
-        // Format: "-population"
-        sortParam = sort.substring(1);
-        sortOrder = 'desc';
-      }
-      
-      // Ensure sortOrder is valid
-      if (sortOrder !== 'asc' && sortOrder !== 'desc') {
-        sortOrder = 'asc';
-      }
-      
-      params.append('sort', sortParam);
-      params.append('order', sortOrder);
+      // FastAPI doesn't support sort parameter in the current implementation
+      // We'll fetch and sort client-side if needed, or just ignore sort for now
+      // Note: The endpoint returns cities but doesn't support sorting yet
       
       if (import.meta.env.DEV) {
-        console.log('[GeoDB Client] Sort params:', {
-          input: sort,
-          sortParam,
-          sortOrder,
-          finalParams: { sort: sortParam, order: sortOrder }
+        console.log('[FastAPI Client] Request params:', {
+          namePrefix,
+          sort,
+          offset,
+          limit,
+          finalParams: Object.fromEntries(params)
         });
       }
 
-      const url = `${this.baseUrl}/cities?${params.toString()}`;
+      const url = `${this.baseUrl}?${params.toString()}`;
 
       // Debug: Log request details
       if (import.meta.env.DEV) {
-        console.log('[GeoDB API Request]', {
+        console.log('[FastAPI Request]', {
           url: url,
           method: 'GET',
-          headers: {
-            'X-RapidAPI-Key': this.apiKey ? this.apiKey.substring(0, 10) + '...' : 'MISSING',
-            'X-RapidAPI-Host': this.apiHost
-          },
           params: Object.fromEntries(params)
         });
       }
@@ -134,8 +108,7 @@ class FetchGeoDBClient {
       const response = await fetch(url, {
         method: 'GET',
         headers: {
-          'X-RapidAPI-Key': this.apiKey,
-          'X-RapidAPI-Host': this.apiHost
+          'Content-Type': 'application/json'
         }
       });
 
@@ -145,30 +118,22 @@ class FetchGeoDBClient {
         
         try {
           const errorData = JSON.parse(errorText);
-          // Check for errors array (RapidAPI format)
-          if (errorData.errors && Array.isArray(errorData.errors) && errorData.errors.length > 0) {
-            const firstError = errorData.errors[0];
-            errorMessage = firstError.message || firstError.code || errorMessage;
-          } else {
-            errorMessage = errorData.message || errorData.error || errorData.details || errorMessage;
-          }
+          errorMessage = errorData.detail || errorData.message || errorData.error || errorMessage;
           
           // Include full error details in console for debugging
-          console.error('[GeoDB API Error]', {
+          console.error('[FastAPI Error]', {
             status: response.status,
             statusText: response.statusText,
             error: errorData,
-            url: url,
-            headers: response.headers ? Object.fromEntries(response.headers.entries()) : null
+            url: url
           });
         } catch (e) {
           // Use default error message
-          console.error('[GeoDB API Error]', {
+          console.error('[FastAPI Error]', {
             status: response.status,
             statusText: response.statusText,
             rawError: errorText,
-            url: url,
-            headers: response.headers ? Object.fromEntries(response.headers.entries()) : null
+            url: url
           });
         }
 
@@ -177,17 +142,42 @@ class FetchGeoDBClient {
         throw new Error(fullErrorMessage);
       }
 
-      const result = await response.json();
+      // FastAPI returns a direct array of cities, not wrapped in {data, metadata}
+      const cities = await response.json();
 
       // Normalize cities
-      const data = (result.data || []).map(normalizeCity).filter(Boolean);
+      const data = (cities || []).map(normalizeCity).filter(Boolean);
 
-      // Extract metadata
+      // Client-side sorting if needed (FastAPI doesn't support sort yet)
+      if (sort) {
+        const sortField = sort.startsWith('-') ? sort.substring(1) : sort;
+        const sortOrder = sort.startsWith('-') ? 'desc' : 'asc';
+        
+        data.sort((a, b) => {
+          let aVal = a[sortField];
+          let bVal = b[sortField];
+          
+          // Handle numeric fields
+          if (sortField === 'population') {
+            aVal = aVal || 0;
+            bVal = bVal || 0;
+          }
+          
+          if (sortOrder === 'desc') {
+            return bVal > aVal ? 1 : bVal < aVal ? -1 : 0;
+          } else {
+            return aVal > bVal ? 1 : aVal < bVal ? -1 : 0;
+          }
+        });
+      }
+
+      // Extract metadata (estimate based on response)
+      // Since FastAPI doesn't return totalCount, we estimate hasMore based on limit
       const metadata = {
-        totalCount: result.metadata?.totalCount || 0,
-        offset: result.metadata?.offset || offset,
-        limit: result.metadata?.limit || limit,
-        hasMore: (result.metadata?.offset || offset) + data.length < (result.metadata?.totalCount || 0)
+        totalCount: data.length, // We don't know the total, so use current count
+        offset: offset,
+        limit: limit,
+        hasMore: data.length === limit // If we got a full page, there might be more
       };
 
       return { data, metadata };
@@ -198,7 +188,7 @@ class FetchGeoDBClient {
       }
       
       if (error.name === 'TypeError' && error.message.includes('fetch')) {
-        throw new Error('Network error: Unable to connect to GeoDB API. Please check your internet connection.');
+        throw new Error('Network error: Unable to connect to FastAPI. Please check if the backend is running.');
       }
 
       throw new Error(`Failed to fetch cities: ${error.message}`);
@@ -207,94 +197,31 @@ class FetchGeoDBClient {
 }
 
 /**
- * Library-based implementation (if available)
+ * Library-based implementation is no longer used since we're using local FastAPI
+ * This class is kept for backward compatibility but will not be instantiated
  */
 class LibraryGeoDBClient {
-  constructor(apiKey, apiHost, ClientLib) {
-    this.ClientLib = ClientLib;
-    this.client = new ClientLib({
-      'X-RapidAPI-Key': apiKey,
-      'X-RapidAPI-Host': apiHost || 'wft-geo-db.p.rapidapi.com'
-    });
-    this.rateLimiter = createRateLimiter({
-      maxTokens: 10,
-      refillRate: 2
-    });
-  }
-
-  async findCities({ namePrefix = '', sort = 'population', offset = 0, limit = 10 }) {
-    try {
-      await this.rateLimiter.wait();
-
-      const sortParam = sort.startsWith('-') ? sort.substring(1) : sort;
-      const sortOrder = sort.startsWith('-') ? 'desc' : 'asc';
-
-      const params = {
-        limit: Math.min(limit, 10), // Free plan max is 10
-        offset,
-        types: 'CITY'
-      };
-
-      if (namePrefix) {
-        params.namePrefix = namePrefix;
-      }
-
-      // Use library method (adjust based on actual library API)
-      // Common methods: getCities, findCities, searchCities
-      const result = await (this.client.getCities?.(params) || 
-                           this.client.findCities?.(params) ||
-                           this.client.searchCities?.(params));
-
-      const data = (result.data || []).map(normalizeCity).filter(Boolean);
-
-      const metadata = {
-        totalCount: result.metadata?.totalCount || 0,
-        offset: result.metadata?.offset || offset,
-        limit: result.metadata?.limit || limit,
-        hasMore: (result.metadata?.offset || offset) + data.length < (result.metadata?.totalCount || 0)
-      };
-
-      return { data, metadata };
-    } catch (error) {
-      throw new Error(`Failed to fetch cities: ${error.message}`);
-    }
-  }
+  // This class is deprecated - we only use FetchGeoDBClient now
 }
 
 /**
- * Create GeoDB client instance
+ * Create FastAPI client instance
  * @param {Object} options - Configuration options
- * @param {string} options.apiKey - RapidAPI key (from env or passed directly)
- * @param {string} options.apiHost - RapidAPI host (optional)
- * @returns {Promise<Object>} Promise resolving to GeoDB client instance
+ * @param {string} options.apiBaseUrl - FastAPI base URL (from env or passed directly)
+ * @returns {Promise<Object>} Promise resolving to FastAPI client instance
  */
 export async function createGeoDBClient(options = {}) {
-  const apiKey = options.apiKey || import.meta.env.VITE_RAPIDAPI_KEY;
-  const apiHost = options.apiHost || import.meta.env.VITE_RAPIDAPI_HOST || 'wft-geo-db.p.rapidapi.com';
+  const apiBaseUrl = options.apiBaseUrl || import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
-  // Debug: Log environment variable status (without exposing full key)
+  // Debug: Log environment variable status
   if (import.meta.env.DEV) {
-    console.log('[GeoDB Client] Environment check:', {
-      hasApiKey: !!apiKey,
-      apiKeyLength: apiKey ? apiKey.length : 0,
-      apiKeyPrefix: apiKey ? apiKey.substring(0, 10) + '...' : 'missing',
-      apiHost: apiHost
+    console.log('[FastAPI Client] Environment check:', {
+      apiBaseUrl: apiBaseUrl
     });
   }
 
-  if (!apiKey) {
-    throw new Error('GeoDB API key is required. Set VITE_RAPIDAPI_KEY in your .env file.');
-  }
-
-  // Try to load library
-  const ClientLib = await loadLibrary();
-  
-  // Use library if available, otherwise use fetch fallback
-  if (ClientLib) {
-    return new LibraryGeoDBClient(apiKey, apiHost, ClientLib);
-  }
-
-  return new FetchGeoDBClient(apiKey, apiHost);
+  // No API key required for local FastAPI endpoint
+  return new FetchGeoDBClient(apiBaseUrl);
 }
 
 /**
