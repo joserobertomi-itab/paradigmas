@@ -1,19 +1,57 @@
 import csv
 import io
-from typing import List, Dict, Any
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+import math
+from typing import List, Dict, Any, Optional
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query
 from sqlmodel import Session, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+from pydantic import BaseModel, Field
 
 from app.db.session import get_session
 from app.models.city import City
 from app.schemas.city import CityRead
-from typing import Optional, List
 
 router = APIRouter(prefix="/cities", tags=["cities"])
 
 BATCH_SIZE = 5000
 MAX_ERROR_EXAMPLES = 10
+
+# Earth's radius in kilometers
+EARTH_RADIUS_KM = 6371.0
+
+
+def haversine_distance(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """
+    Calculate the great circle distance between two points on Earth using the Haversine formula.
+    
+    This function handles negative latitude and longitude values correctly:
+    - Negative latitude: South of the equator
+    - Negative longitude: West of the prime meridian
+    
+    Args:
+        lat1: Latitude of first point in degrees (can be negative)
+        lng1: Longitude of first point in degrees (can be negative)
+        lat2: Latitude of second point in degrees (can be negative)
+        lng2: Longitude of second point in degrees (can be negative)
+    
+    Returns:
+        Distance in kilometers
+    """
+    # Convert degrees to radians
+    lat1_rad = math.radians(lat1)
+    lng1_rad = math.radians(lng1)
+    lat2_rad = math.radians(lat2)
+    lng2_rad = math.radians(lng2)
+    
+    # Haversine formula
+    dlat = lat2_rad - lat1_rad
+    dlng = lng2_rad - lng1_rad
+    
+    a = math.sin(dlat / 2) ** 2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlng / 2) ** 2
+    c = 2 * math.asin(math.sqrt(a))
+    
+    return EARTH_RADIUS_KM * c
 
 
 def parse_csv_row(row: List[str], line_number: int) -> Dict[str, Any] | None:
@@ -280,3 +318,92 @@ async def get_cities(
     
     cities = session.exec(query).all()
     return cities
+
+
+class CitiesResponse(BaseModel):
+    """Response model for cities endpoints with count and data"""
+    count: int = Field(..., description="Number of cities returned")
+    data: List[CityRead] = Field(..., description="List of cities")
+
+
+@router.get(
+    "/radius",
+    response_model=CitiesResponse,
+    summary="Find cities within radius",
+    description="Find all cities within a specified radius (in kilometers) of one or more reference cities",
+    response_description="Cities within the radius with count",
+    tags=["cities"]
+)
+async def get_cities_within_radius(
+    city_ids: List[int] = Query(..., description="List of city IDs to use as reference points", min_length=1),
+    radius_km: float = Query(..., description="Radius in kilometers", gt=0),
+    session: Session = Depends(get_session)
+):
+    """
+    Encontra todas as cidades dentro de um raio especificado de uma ou mais cidades de referência.
+    
+    **Parâmetros**:
+    - city_ids: Lista de IDs de cidades de referência (mínimo 1)
+    - radius_km: Raio em quilômetros (deve ser maior que 0)
+    
+    **Funcionamento**:
+    1. Busca as cidades de referência pelos IDs fornecidos
+    2. Para cada cidade de referência, encontra todas as cidades dentro do raio especificado
+    3. Usa a fórmula de Haversine para calcular distâncias na superfície da Terra
+    4. Retorna todas as cidades encontradas (sem duplicatas)
+    
+    **Tratamento de Coordenadas Negativas**:
+    - Latitude negativa: Sul do equador (ex: -23.5505 para São Paulo)
+    - Longitude negativa: Oeste do meridiano de Greenwich (ex: -46.6333 para São Paulo)
+    - A fórmula de Haversine trata corretamente valores negativos convertendo para radianos
+    
+    **Retorno**:
+    - Lista de cidades dentro do raio (formato igual ao GET /api/v1/cities)
+    - Se uma cidade está dentro do raio de múltiplas cidades de referência, aparece apenas uma vez
+    """
+    
+    # Fetch reference cities
+    reference_cities = session.exec(
+        select(City).where(City.id.in_(city_ids))
+    ).all()
+    
+    if not reference_cities:
+        raise HTTPException(status_code=404, detail="No reference cities found with the provided IDs")
+    
+    if len(reference_cities) < len(city_ids):
+        found_ids = {city.id for city in reference_cities}
+        missing_ids = set(city_ids) - found_ids
+        raise HTTPException(
+            status_code=404,
+            detail=f"Some city IDs were not found: {sorted(missing_ids)}"
+        )
+    
+    # Get all cities (we'll filter by distance in Python)
+    # For large datasets, this could be optimized with a bounding box query
+    all_cities = session.exec(select(City)).all()
+    
+    # Find cities within radius
+    cities_within_radius: Dict[int, City] = {}
+    
+    for ref_city in reference_cities:
+        for city in all_cities:
+            # Skip the reference city itself
+            if city.id == ref_city.id:
+                continue
+            
+            # Calculate distance using Haversine formula
+            distance = haversine_distance(
+                ref_city.lat, ref_city.lng,
+                city.lat, city.lng
+            )
+            
+            # Check if within radius
+            if distance <= radius_km:
+                # If city already found, just add it (deduplicate by ID)
+                if city.id not in cities_within_radius:
+                    cities_within_radius[city.id] = city
+    
+    # Convert to response format (just the cities, same format as GET /api/v1/cities)
+    result = list(cities_within_radius.values())
+    
+    return CitiesResponse(count=len(result), data=result)
