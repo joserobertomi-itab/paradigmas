@@ -14,6 +14,7 @@ import {
   selectSelectedCities,
   selectSelected,
   selectSelectedCount,
+  selectSelectedOrder,
   selectPage,
   selectBulkLoaded,
   selectAsyncStatus,
@@ -23,7 +24,8 @@ import {
   selectKmeansMetrics,
   selectKmeansIterations,
   selectClusterFilter,
-  selectSort
+  selectSort,
+  selectRadius
 } from './selectors.js';
 
 function escapeHtml(text) {
@@ -104,7 +106,7 @@ export function render(root, state) {
   }
 
   // Render status
-  const statusTextEl = qs('#status-text', root);
+  const statusTextEl = qs('#statusText', root);
   if (statusTextEl) {
     const status = selectAsyncStatus(state);
     // Remove all status classes
@@ -115,7 +117,7 @@ export function render(root, state) {
   }
 
   // Render progress
-  const progressBarEl = qs('#progress-bar', root);
+  const progressBarEl = qs('#progressBar', root);
   const progressTextEl = qs('#progress-text', root);
   if (progressBarEl) {
     const progress = selectAsyncProgress(state);
@@ -128,7 +130,7 @@ export function render(root, state) {
   }
 
   // Render logs
-  const logsTextareaEl = qs('#logs-textarea', root);
+  const logsTextareaEl = qs('#logBox', root);
   if (logsTextareaEl) {
     const logs = selectAsyncLogs(state);
     logsTextareaEl.value = logsTextarea(logs);
@@ -224,7 +226,7 @@ export function render(root, state) {
   // Update button states
   const prevPageBtn = qs('#prev-page-btn', root);
   const nextPageBtn = qs('#next-page-btn', root);
-  const processBtn = qs('#process-btn', root);
+  const runBulkKmeansBtn = qs('#runBulkKmeansBtn', root);
   
   if (prevPageBtn) {
     const page = selectPage(state);
@@ -237,23 +239,107 @@ export function render(root, state) {
     nextPageBtn.disabled = results.length < pageSize;
   }
 
-  const cancelBtn = qs('#cancel-btn', root);
-  
-  if (processBtn) {
+  // Update run K-means button state
+  if (runBulkKmeansBtn) {
+    const selectedCities = selectSelectedCities(state);
+    const selectedOrder = selectSelectedOrder(state);
     const status = selectAsyncStatus(state);
     const isRunning = status === 'loading' || status === 'clustering';
-    processBtn.disabled = isRunning;
+    const hasSelected = (selectedCities && selectedCities.length > 0) || (selectedOrder && selectedOrder.length > 0);
     
-    // Show/hide cancel button
-    if (cancelBtn) {
-      cancelBtn.style.display = isRunning ? 'inline-block' : 'none';
-    }
+    // Disable if no cities selected or if running
+    runBulkKmeansBtn.disabled = !hasSelected || isRunning;
   }
+
+  const cancelBtn = qs('#cancel-btn', root);
   
-  // Update cancel button state
+  // Show/hide cancel button and update state
   if (cancelBtn) {
     const status = selectAsyncStatus(state);
     const isRunning = status === 'loading' || status === 'clustering';
+    cancelBtn.style.display = isRunning ? 'inline-block' : 'none';
     cancelBtn.disabled = !isRunning;
+    
+    // Update button text based on status
+    if (isRunning) {
+      const statusText = status === 'loading' ? 'Cancelar busca' : 'Cancelar K-means';
+      if (cancelBtn.textContent !== statusText) {
+        cancelBtn.textContent = statusText;
+      }
+    }
+  }
+  
+  // Render error message if present
+  const asyncError = state.async?.error;
+  if (asyncError) {
+    let errorEl = qs('#error-message', root);
+    if (!errorEl) {
+      const processingSection = qs('.processing-section', root);
+      if (processingSection) {
+        errorEl = document.createElement('div');
+        errorEl.id = 'error-message';
+        errorEl.className = 'error-message';
+        errorEl.style.cssText = 'background: #ffebee; border: 1px solid #f44336; padding: 12px; margin: 10px 0; border-radius: 4px;';
+        processingSection.insertBefore(errorEl, processingSection.firstChild);
+      }
+    }
+    if (errorEl) {
+      errorEl.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span style="color: #c62828; font-weight: bold;">⚠️ Erro: ${escapeHtml(asyncError)}</span>
+          <button id="dismiss-error-btn" class="btn btn-small" style="margin-left: 10px;">Dispensar</button>
+        </div>
+      `;
+    }
+  } else {
+    // Remove error message if no error
+    const errorEl = qs('#error-message', root);
+    if (errorEl) {
+      errorEl.remove();
+    }
+  }
+
+  // Update radius input value (only if not focused to avoid interrupting user input)
+  const radiusInput = qs('#radiusInput', root);
+  if (radiusInput) {
+    const radius = selectRadius(state);
+    const isFocused = document.activeElement === radiusInput;
+    
+    // Only update if input is not focused and value is different
+    if (!isFocused && radiusInput.value !== String(radius)) {
+      radiusInput.value = String(radius);
+    }
+  }
+
+  // Render processing info (selected count, radius, dataset size)
+  const processingSection = qs('.processing-section', root);
+  if (processingSection) {
+    let infoEl = qs('#processing-info', root);
+    if (!infoEl) {
+      infoEl = document.createElement('div');
+      infoEl.id = 'processing-info';
+      infoEl.className = 'processing-info';
+      // Insert after processing-controls
+      const controlsEl = qs('.processing-controls', processingSection);
+      if (controlsEl && controlsEl.nextSibling) {
+        processingSection.insertBefore(infoEl, controlsEl.nextSibling);
+      } else if (controlsEl) {
+        processingSection.appendChild(infoEl);
+      }
+    }
+
+    const selectedCount = selectSelectedCount(state);
+    const radius = selectRadius(state);
+    const bulkLoaded = selectBulkLoaded(state);
+    
+    let infoText = `Selecionadas: ${selectedCount}`;
+    infoText += ` | Raio: ${radius} km`;
+    
+    // Show dataset size if available (after load)
+    if (bulkLoaded > 0) {
+      infoText += ` | Dataset final (raio + referências): ${bulkLoaded} cidade(s)`;
+    }
+    
+    setText(infoEl, infoText);
   }
 }

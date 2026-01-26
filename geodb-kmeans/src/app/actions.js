@@ -5,6 +5,7 @@ export const ActionTypes = {
   UI_SET_SORT: 'UI/SET_SORT',
   UI_SET_PAGE: 'UI/SET_PAGE',
   UI_SET_K: 'UI/SET_K',
+  UI_SET_RADIUS: 'UI/SET_RADIUS',
 
   // Data
   DATA_SET_RESULTS: 'DATA/SET_RESULTS',
@@ -61,6 +62,11 @@ export const setPage = (page) => ({
 export const setK = (k) => ({
   type: ActionTypes.UI_SET_K,
   payload: k
+});
+
+export const setRadius = (radius) => ({
+  type: ActionTypes.UI_SET_RADIUS,
+  payload: radius
 });
 
 // Data actions
@@ -170,6 +176,7 @@ export const actions = {
   setSort,
   setPage,
   setK,
+  setRadius,
 
   // Data
   setResults,

@@ -194,6 +194,107 @@ class FetchGeoDBClient {
       throw new Error(`Failed to fetch cities: ${error.message}`);
     }
   }
+
+  async findCitiesWithinRadius({ cityIds, radiusKm }) {
+    try {
+      // Validate inputs
+      if (!Array.isArray(cityIds) || cityIds.length === 0) {
+        throw new Error('cityIds must be a non-empty array');
+      }
+
+      if (typeof radiusKm !== 'number' || radiusKm <= 0 || isNaN(radiusKm)) {
+        throw new Error('radiusKm must be a positive number');
+      }
+
+      // Wait for rate limiter
+      await this.rateLimiter.wait();
+
+      // Build query parameters
+      // FastAPI expects multiple city_ids query params: ?city_ids=1&city_ids=2&radius_km=100
+      const params = new URLSearchParams();
+      cityIds.forEach(id => {
+        params.append('city_ids', String(id));
+      });
+      params.append('radius_km', String(radiusKm));
+
+      const url = `${this.baseUrl}/radius?${params.toString()}`;
+
+      if (import.meta.env.DEV) {
+        console.log('[FastAPI Request] findCitiesWithinRadius', {
+          url: url,
+          method: 'GET',
+          cityIds: cityIds,
+          radiusKm: radiusKm
+        });
+      }
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        let errorMessage = `API request failed: ${response.status} ${response.statusText}`;
+        
+        try {
+          const errorData = JSON.parse(errorText);
+          errorMessage = errorData.detail || errorData.message || errorData.error || errorMessage;
+          
+          // Include full error details in console for debugging
+          console.error('[FastAPI Error] findCitiesWithinRadius', {
+            status: response.status,
+            statusText: response.statusText,
+            error: errorData,
+            url: url
+          });
+        } catch (e) {
+          // Use default error message
+          console.error('[FastAPI Error] findCitiesWithinRadius', {
+            status: response.status,
+            statusText: response.statusText,
+            rawError: errorText,
+            url: url
+          });
+        }
+
+        // Include more details in error message
+        const fullErrorMessage = `${errorMessage} (Status: ${response.status})`;
+        throw new Error(fullErrorMessage);
+      }
+
+      // FastAPI returns { count: number, data: CityRead[] }
+      const result = await response.json();
+      const cities = result.data || result || [];
+
+      // Normalize cities using the existing normalizeCity function
+      const normalizedCities = (cities || []).map(normalizeCity).filter(Boolean);
+
+      if (import.meta.env.DEV) {
+        console.log('[FastAPI Response] findCitiesWithinRadius', {
+          cityIds: cityIds,
+          radiusKm: radiusKm,
+          citiesFound: normalizedCities.length,
+          count: result.count
+        });
+      }
+
+      return normalizedCities;
+    } catch (error) {
+      // Provide friendly error messages
+      if (error.message.includes('API request failed')) {
+        throw error;
+      }
+      
+      if (error.name === 'TypeError' && error.message.includes('fetch')) {
+        throw new Error('Network error: Unable to connect to FastAPI. Please check if the backend is running.');
+      }
+
+      throw new Error(`Failed to fetch cities within radius: ${error.message}`);
+    }
+  }
 }
 
 /**
@@ -236,6 +337,21 @@ export async function createGeoDBClient(options = {}) {
 export async function findCities(params = {}) {
   const client = await createGeoDBClient();
   return client.findCities(params);
+}
+
+/**
+ * Find cities within radius of reference cities
+ * @param {Object} params - Search parameters
+ * @param {Array<number|string>} params.cityIds - Array of city IDs to use as reference points
+ * @param {number} params.radiusKm - Radius in kilometers (must be > 0)
+ * @returns {Promise<Array>} Promise resolving to array of normalized city objects
+ * @note This function does NOT include the reference cities in the result.
+ *       The endpoint /radius excludes reference cities from the response.
+ *       If you need the reference cities, include them separately in your use case.
+ */
+export async function findCitiesWithinRadius({ cityIds, radiusKm }) {
+  const client = await createGeoDBClient();
+  return client.findCitiesWithinRadius({ cityIds, radiusKm });
 }
 
 // Export default client instance (lazy initialization)

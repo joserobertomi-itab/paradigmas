@@ -24,6 +24,10 @@ export function selectK(state) {
   return state.kmeans?.k || 5;
 }
 
+export function selectRadius(state) {
+  return state.radius !== undefined ? state.radius : 100;
+}
+
 // Data selectors
 export function selectResults(state) {
   return state.results || [];

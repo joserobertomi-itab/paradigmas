@@ -66,17 +66,31 @@
         <h2>Processamento</h2>
         <div class="processing-controls">
           <div class="k-input-group">
-            <label for="k-input">k (número de clusters):</label>
+            <label for="radiusInput">Raio (km):</label>
             <input 
               type="number" 
-              id="k-input" 
+              id="radiusInput" 
               class="k-input" 
               min="1" 
+              max="500" 
+              step="1" 
+              value="100"
+            />
+          </div>
+          <div class="k-input-group">
+            <label for="kInput">k (número de clusters):</label>
+            <input 
+              type="number" 
+              id="kInput" 
+              class="k-input" 
+              min="2" 
+              max="50" 
+              step="1" 
               value="5"
             />
           </div>
-          <button id="process-btn" class="btn btn-process">
-            Carregar ~10k cidades (paralelo) + Rodar K-means
+          <button id="runBulkKmeansBtn" class="btn btn-process">
+            Carregar cidades no raio + Rodar K-means
           </button>
           <button id="cancel-btn" class="btn btn-danger" style="display: none;">
             Cancelar
@@ -86,19 +100,19 @@
         <div class="processing-status">
           <div class="status-info">
             <span>Status: </span>
-            <span id="status-text" class="status-text status-idle">idle</span>
+            <span id="statusText" class="status-text status-idle">idle</span>
           </div>
           <div class="progress-container">
-            <label for="progress-bar">Progresso:</label>
-            <progress id="progress-bar" class="progress-bar" value="0" max="100">0%</progress>
+            <label for="progressBar">Progresso:</label>
+            <progress id="progressBar" class="progress-bar" value="0" max="100">0%</progress>
             <span id="progress-text" class="progress-text">0%</span>
           </div>
         </div>
 
         <div class="logs-container">
-          <label for="logs-textarea">Logs:</label>
+          <label for="logBox">Logs:</label>
           <textarea 
-            id="logs-textarea" 
+            id="logBox" 
             class="logs-textarea" 
             readonly
             rows="10"

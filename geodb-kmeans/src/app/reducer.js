@@ -112,6 +112,24 @@ export function reducer(state = initialState, action) {
         }
       };
 
+    case 'UI/SET_RADIUS': {
+      // Convert to number if string, clamp between 1 and 500
+      let radius = action.payload;
+      if (typeof radius === 'string') {
+        radius = parseFloat(radius);
+      }
+      if (typeof radius !== 'number' || isNaN(radius)) {
+        radius = 100; // Default value
+      }
+      // Clamp between 1 and 500
+      radius = Math.max(1, Math.min(500, radius));
+      
+      return {
+        ...state,
+        radius: radius
+      };
+    }
+
     // Data actions
     case 'DATA/SET_RESULTS': {
       const results = Array.isArray(action.payload) ? action.payload : [];

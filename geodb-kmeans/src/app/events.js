@@ -1,11 +1,14 @@
 import { qs, on } from '../ui/dom.js';
 import * as actions from './actions.js';
-import { selectK, selectQuery, selectSort, selectPage, selectPageSize, selectBulkTotalTarget } from './selectors.js';
-import { findCities } from '../api/geodbClient.js';
+import { selectK, selectQuery, selectSort, selectPage, selectPageSize, selectBulkTotalTarget, selectRadius, selectSelectedCities, selectSelectedOrder } from './selectors.js';
+import { findCities, findCitiesWithinRadius } from '../api/geodbClient.js';
 import { pageToOffset } from '../api/paging.js';
-import { createSharedCityBuffers, getAllCities, getWriteIndex } from '../workers/sharedMemory.js';
+import { createSharedCityBuffers, getAllCities, getWriteIndex, writeCity } from '../workers/sharedMemory.js';
 import { createWorkerPool } from '../workers/workerPool.js';
 import { kmeans as runKmeans } from '../kmeans/kmeans.js';
+import { kmeansSingle } from '../kmeans/kmeansSingle.js';
+import { kmeansParallel } from '../kmeans/kmeansParallel.js';
+import { createRateLimiter } from '../api/rateLimit.js';
 
 /**
  * Fetch cities from API with race condition prevention
@@ -212,7 +215,7 @@ export function bindEvents(root, store) {
   }
 
   // K input
-  const kInput = qs('#k-input', root);
+  const kInput = qs('#kInput', root);
   if (kInput) {
     on(kInput, 'input', (e) => {
       const k = parseInt(e.target.value, 10);
@@ -222,17 +225,46 @@ export function bindEvents(root, store) {
     });
   }
 
-  // Process button
-  const processBtn = qs('#process-btn', root);
+  // Radius input
+  const radiusInput = qs('#radiusInput', root);
+  if (radiusInput) {
+    on(radiusInput, 'input', (e) => {
+      const radius = parseFloat(e.target.value);
+      if (!isNaN(radius) && radius > 0) {
+        store.dispatch(actions.setRadius(radius));
+      }
+    });
+  }
+
+  // Process button (run K-means)
+  const runBulkKmeansBtn = qs('#runBulkKmeansBtn', root);
   let currentPool = null; // Store reference to worker pool for cancellation
+  let currentOperation = null; // Store reference to current operation promise for cancellation
   
-  if (processBtn) {
-    on(processBtn, 'click', async () => {
+  if (runBulkKmeansBtn) {
+    on(runBulkKmeansBtn, 'click', async () => {
       // Reset cancellation flag
       store.dispatch(actions.resetAsync());
-      currentPool = await startBulkLoadAndKmeans(store, (pool) => {
+      
+      // Start operation and store promise
+      const operationPromise = startBulkLoadAndKmeans(store, (pool) => {
         currentPool = pool;
       });
+      currentOperation = operationPromise;
+      
+      try {
+        await operationPromise;
+      } catch (error) {
+        // Handle cancellation or errors
+        if (error.message === 'K-means cancelled' || store.getState().async.cancelled) {
+          // Already handled in startBulkLoadAndKmeans
+        } else {
+          console.error('Error in K-means operation:', error);
+        }
+      } finally {
+        currentOperation = null;
+        currentPool = null;
+      }
     });
   }
 
@@ -240,19 +272,32 @@ export function bindEvents(root, store) {
   const cancelBtn = qs('#cancel-btn', root);
   if (cancelBtn) {
     on(cancelBtn, 'click', () => {
-      store.dispatch(actions.cancelOperation());
-      store.dispatch(actions.addLog('Operação cancelada pelo usuário'));
+      const state = store.getState();
+      const status = state.async?.status;
       
-      // Terminate workers
-      if (currentPool) {
-        currentPool.terminate();
-        currentPool = null;
+      // Only allow cancellation if operation is running
+      if (status === 'loading' || status === 'clustering') {
+        store.dispatch(actions.cancelOperation());
+        store.dispatch(actions.addLog('Cancelamento solicitado pelo usuário...'));
+        
+        // Terminate workers immediately
+        if (currentPool) {
+          try {
+            currentPool.terminate();
+            store.dispatch(actions.addLog('Workers terminados'));
+          } catch (error) {
+            console.error('Error terminating workers:', error);
+            store.dispatch(actions.addLog('Erro ao terminar workers'));
+          }
+          currentPool = null;
+        }
+        
+        // Reset state to idle (preserve selected cities)
+        store.dispatch(actions.setStatus('idle'));
+        store.dispatch(actions.setProgress(0));
+        store.dispatch(actions.setBulkLoaded(0));
+        store.dispatch(actions.addLog('Operação cancelada. Cidades selecionadas preservadas.'));
       }
-      
-      // Reset state
-      store.dispatch(actions.setStatus('idle'));
-      store.dispatch(actions.setProgress(0));
-      store.dispatch(actions.setBulkLoaded(0));
     });
   }
 
@@ -320,18 +365,22 @@ export function bindEvents(root, store) {
       const metrics = state.kmeans?.metrics;
       const iterations = state.kmeans?.iterations;
 
-      if (clusters) {
+      if (clusters && metrics) {
+        // Extract centroids array
+        const centroids = clusters.map(cluster => cluster.centroid);
+        
+        // Extract cluster sizes array
+        const clusterSizes = clusters.map(cluster => cluster.size);
+
         const exportData = {
-          clusters: clusters.map((cluster, index) => ({
-            clusterId: index,
-            centroid: cluster.centroid,
-            size: cluster.size,
-            cities: cluster.cities
-          })),
-          metrics: {
-            ...metrics,
-            iterations
-          },
+          datasetSize: metrics.datasetSize || 0,
+          radiusKm: metrics.radiusKm || 0,
+          k: metrics.k || state.kmeans?.k || 5,
+          iterations: iterations || 0,
+          totalTimeMs: metrics.totalTimeMs || 0,
+          centroids: centroids,
+          clusterSizes: clusterSizes,
+          assignmentsById: metrics.assignmentsById || null, // Optional, only if not too heavy
           exportedAt: new Date().toISOString()
         };
 
@@ -360,233 +409,252 @@ export function bindEvents(root, store) {
 }
 
 /**
- * Start bulk load and K-means clustering
+ * Start bulk load and K-means clustering using selected cities as reference points
+ * 
+ * Flow:
+ * 1. Get selected cities and IDs from state
+ * 2. Call findCitiesWithinRadius with selected IDs and radius (with rate limiting)
+ * 3. Build final dataset: cities from radius + selected cities (no duplicates)
+ * 4. Validate k (>= 2 and <= dataset.length)
+ * 5. Run K-means on final dataset
+ * 
+ * Note: Selected cities already have lat/lng/pop in state because they come from
+ * normalized API results (via normalizeCity in geodbClient.js). They are stored
+ * in state.selected as complete city objects with all required fields.
+ * 
+ * @param {Object} store - Redux store
+ * @param {Function} onPoolCreated - Callback when worker pool is created (for cancellation)
+ * @returns {Promise<Object|null>} Worker pool or null if cancelled/errored
  */
-async function startBulkLoadAndKmeans(store) {
+async function startBulkLoadAndKmeans(store, onPoolCreated = null) {
   const state = store.getState();
+  
+  // Get inputs from state
+  const selectedCities = selectSelectedCities(state);
+  const selectedIds = selectSelectedOrder(state);
+  const radiusKm = selectRadius(state);
   const k = selectK(state);
-  const totalTarget = selectBulkTotalTarget(state);
-  const sort = selectSort(state);
-  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
-  // No API key required for local FastAPI endpoint
+  // Step 1: Validate that we have selected cities
+  if (!selectedCities || selectedCities.length === 0) {
+    store.dispatch(actions.setError('Nenhuma cidade selecionada. Selecione pelo menos uma cidade antes de rodar K-means.'));
+    store.dispatch(actions.setStatus('error'));
+    store.dispatch(actions.addLog('Aviso: Nenhuma cidade selecionada. Operação cancelada.'));
+    return null;
+  }
 
   // Check SharedArrayBuffer support
   if (typeof SharedArrayBuffer === 'undefined') {
     store.dispatch(actions.setError('SharedArrayBuffer não disponível. Use HTTPS ou localhost.'));
     store.dispatch(actions.setStatus('error'));
-    return;
+    return null;
   }
 
   try {
     const startTime = performance.now();
     store.dispatch(actions.setStatus('loading'));
     store.dispatch(actions.clearLogs());
-    store.dispatch(actions.addLog(`Iniciando carregamento massivo de ~${totalTarget} cidades...`));
+    store.dispatch(actions.addLog(`Iniciando busca de cidades no raio de ${radiusKm}km de ${selectedCities.length} cidade(s) de referência...`));
     store.dispatch(actions.setProgress(0));
     store.dispatch(actions.setBulkLoaded(0));
 
-    // Determine number of workers (use hardware concurrency - 1, min 2, max 8)
-    const hardwareConcurrency = navigator.hardwareConcurrency || 4;
-    const workerCount = Math.max(2, Math.min(8, hardwareConcurrency - 1));
-    
-    store.dispatch(actions.addLog(`Usando ${workerCount} workers paralelos`));
+    // Step 2: Call findCitiesWithinRadius
+    // Convert selected IDs to numbers (they might be strings)
+    const cityIds = selectedIds.map(id => {
+      const numId = typeof id === 'string' ? parseInt(id, 10) : id;
+      return isNaN(numId) ? null : numId;
+    }).filter(id => id !== null);
 
-    // Create shared buffers
-    const buffers = createSharedCityBuffers(totalTarget);
-    store.dispatch(actions.addLog(`Buffers compartilhados criados (capacidade: ${totalTarget})`));
-
-    // Create worker pool
-    const workerUrl = new URL('../workers/fetchWorker.js', import.meta.url).href;
-    const pool = createWorkerPool({ size: workerCount, workerUrl });
-
-    // Calculate parameters
-    const pageSize = 100; // FastAPI supports up to 1000, using 100 for better performance
-    const sortParam = sort.includes(':') ? sort.split(':')[0] : 
-                     sort.includes('-') ? sort.split('-')[0] : sort;
-
-    // Distribute work: each worker fetches strided pages
-    // Worker i fetches: i*pageSize, (i+W)*pageSize, (i+2W)*pageSize...
-    const pagesPerWorker = Math.ceil(totalTarget / (workerCount * pageSize));
-    const totalPages = pagesPerWorker * workerCount;
-
-    store.dispatch(actions.addLog(`Distribuindo ${totalPages} páginas entre ${workerCount} workers`));
-
-    // Check for cancellation before starting
-    if (store.getState().async.cancelled) {
-      pool.terminate();
+    if (cityIds.length === 0) {
+      store.dispatch(actions.setError('IDs de cidades inválidos.'));
+      store.dispatch(actions.setStatus('error'));
       return null;
     }
 
-    // Start all workers
-    const workerPromises = [];
-
-    for (let i = 0; i < workerCount; i++) {
-      // Check for cancellation
-      if (store.getState().async.cancelled) {
-        break;
-      }
-      const startOffset = i * pageSize;
-      const endOffset = startOffset + (pagesPerWorker * workerCount * pageSize);
-
-      const promise = pool.runTask(
-        {
-          workerId: i,
-          totalWorkers: workerCount,
-          pageSize,
-          startOffset,
-          endOffset,
-          apiBaseUrl,
-          sort: sortParam,
-          sharedBuffers: {
-            indexBuffer: buffers.indexBuffer,
-            writeIndex: buffers.writeIndex,
-            latBuffer: buffers.latBuffer,
-            latitudes: buffers.latitudes,
-            lonBuffer: buffers.lonBuffer,
-            longitudes: buffers.longitudes,
-            popBuffer: buffers.popBuffer,
-            populations: buffers.populations,
-            idxBuffer: buffers.idxBuffer,
-            localIndices: buffers.localIndices,
-            capacity: buffers.capacity
-          },
-          idsLocal: buffers.idsLocal
-        },
-        (update) => {
-          // Progress callback
-          const { type, payload: progress } = update;
-          
-          if (type === 'city-ids') {
-            // Map city IDs to local indices
-            for (const { slot, id } of progress.cityData) {
-              buffers.idsLocal[slot] = id;
-            }
-            return;
-          }
-          
-          if (progress.capacityExceeded) {
-            store.dispatch(actions.addLog(`Worker ${progress.workerId}: Capacidade atingida`));
-          } else if (progress.error) {
-            store.dispatch(actions.addLog(`Worker ${progress.workerId}: Erro em offset ${progress.offset}: ${progress.error}`));
-          } else {
-            const currentCount = getWriteIndex(buffers.writeIndex);
-            const progressPercent = Math.min(100, Math.round((currentCount / totalTarget) * 100));
-            
-            store.dispatch(actions.setProgress(progressPercent));
-            store.dispatch(actions.setBulkLoaded(currentCount));
-            
-            if (progress.offset && progress.offset % (pageSize * 10) === 0) {
-              store.dispatch(actions.addLog(`Progresso: ${currentCount}/${totalTarget} cidades (${progressPercent}%)`));
-            }
-          }
-        }
-      );
-
-      workerPromises.push(promise);
-    }
-
-    // Wait for all workers to complete (with cancellation check)
-    const results = await Promise.allSettled(workerPromises);
+    store.dispatch(actions.addLog(`Buscando cidades no raio de ${radiusKm}km das cidades: ${cityIds.join(', ')}`));
     
-    // Check if cancelled
+    // Rate limiting for /radius endpoint (if multiple calls needed in future)
+    // For now, single call, but rate limiter ensures we don't overwhelm API
+    const radiusRateLimiter = createRateLimiter({
+      maxTokens: 5,
+      refillRate: 1 // 1 request per second max
+    });
+    
+    await radiusRateLimiter.wait();
+    
+    // Check for cancellation before API call
     if (store.getState().async.cancelled) {
-      pool.terminate();
-      store.dispatch(actions.addLog('Carregamento cancelado'));
+      store.dispatch(actions.addLog('Operação cancelada antes da chamada à API'));
       return null;
     }
     
-    const finalCount = getWriteIndex(buffers.writeIndex);
-    const loadEndTime = performance.now();
-    const loadTimeMs = loadEndTime - startTime;
-    
-    store.dispatch(actions.setBulkLoaded(finalCount));
-    store.dispatch(actions.setProgress(100));
-    store.dispatch(actions.addLog(`Carregamento concluído: ${finalCount} cidades carregadas em ${(loadTimeMs / 1000).toFixed(2)}s`));
-
-    // Check for errors
-    const errors = results.filter(r => r.status === 'rejected');
-    if (errors.length > 0) {
-      store.dispatch(actions.addLog(`Aviso: ${errors.length} workers falharam`));
-      // Log error details
-      errors.forEach((error, idx) => {
-        const reason = error.reason?.message || error.reason || 'Erro desconhecido';
-        store.dispatch(actions.addLog(`  Worker ${idx + 1} falhou: ${reason}`));
+    let citiesWithinRadius;
+    try {
+      citiesWithinRadius = await findCitiesWithinRadius({
+        cityIds: cityIds,
+        radiusKm: radiusKm
       });
+    } catch (error) {
+      // Preserve selected cities on error
+      const errorMessage = error.message || 'Erro desconhecido ao buscar cidades no raio';
+      store.dispatch(actions.setError(`Erro ao buscar cidades: ${errorMessage}. As cidades selecionadas foram preservadas.`));
+      store.dispatch(actions.setStatus('error'));
+      store.dispatch(actions.addLog(`Erro na busca: ${errorMessage}`));
+      return null;
     }
 
-    // Terminate pool
-    pool.terminate();
-
-    // Map IDs from local indices
-    const cities = [];
-    for (let i = 0; i < Math.min(finalCount, buffers.capacity); i++) {
-      const localIndex = buffers.localIndices[i];
-      if (localIndex >= 0 && buffers.idsLocal[localIndex]) {
-        cities.push({
-          id: buffers.idsLocal[localIndex],
-          latitude: buffers.latitudes[i],
-          longitude: buffers.longitudes[i],
-          population: buffers.populations[i]
-        });
-      }
+    // Check for cancellation after API call
+    if (store.getState().async.cancelled) {
+      store.dispatch(actions.addLog('Operação cancelada após chamada à API'));
+      return null;
     }
 
-    store.dispatch(actions.addLog(`Preparando ${finalCount} cidades para K-means (k=${k})...`));
+    store.dispatch(actions.addLog(`Encontradas ${citiesWithinRadius.length} cidade(s) dentro do raio`));
+
+    // Step 3: Build final dataset
+    // Include cities from radius + selected cities (no duplicates by id)
+    const datasetMap = new Map();
     
-    // Log selected cities for clustering
-    if (cities.length > 0) {
-      const cityIds = cities.map(c => c.id);
-      const maxDisplay = 30;
-      if (cityIds.length <= maxDisplay) {
-        store.dispatch(actions.addLog(`Cidades selecionadas para clustering (${cityIds.length}): ${cityIds.join(', ')}`));
-      } else {
-        const displayedIds = cityIds.slice(0, maxDisplay);
-        store.dispatch(actions.addLog(`Cidades selecionadas para clustering (${cityIds.length}): ${displayedIds.join(', ')}... (+${cityIds.length - maxDisplay} mais)`));
+    // First, add cities from radius
+    citiesWithinRadius.forEach(city => {
+      if (city && city.id) {
+        datasetMap.set(String(city.id), city);
       }
-    } else {
-      store.dispatch(actions.addLog(`Nenhuma cidade disponível para clustering`));
-      // Diagnostic: check if there are any IDs in idsLocal array
-      const idsInBuffer = buffers.idsLocal.filter(id => id != null).length;
-      if (idsInBuffer > 0) {
-        store.dispatch(actions.addLog(`Diagnóstico: ${idsInBuffer} IDs encontrados em idsLocal, mas writeIndex=${finalCount}`));
+    });
+    
+    // Then, add selected cities (these are the reference cities)
+    // Note: Selected cities already have lat/lng/pop because they come from normalized API results
+    selectedCities.forEach(city => {
+      if (city && city.id) {
+        // Overwrite if exists (selected cities take precedence to ensure they have all fields)
+        datasetMap.set(String(city.id), city);
       }
+    });
+
+    const finalDataset = Array.from(datasetMap.values());
+    
+    store.dispatch(actions.addLog(`Dataset final: ${finalDataset.length} cidade(s) (${citiesWithinRadius.length} do raio + ${selectedCities.length} de referência, sem duplicatas)`));
+
+    // Step 4: Validate k
+    if (k < 2) {
+      const errorMessage = `k deve ser >= 2. Valor atual: ${k}. As cidades selecionadas foram preservadas.`;
+      store.dispatch(actions.setError(errorMessage));
+      store.dispatch(actions.setStatus('error'));
+      store.dispatch(actions.addLog(`Erro: k=${k} é inválido (mínimo: 2)`));
+      return null;
     }
+
+    if (k > finalDataset.length) {
+      const errorMessage = `k (${k}) não pode ser maior que o número de cidades (${finalDataset.length}). As cidades selecionadas foram preservadas.`;
+      store.dispatch(actions.setError(errorMessage));
+      store.dispatch(actions.setStatus('error'));
+      store.dispatch(actions.addLog(`Erro: k=${k} > dataset.length=${finalDataset.length}`));
+      return null;
+    }
+
+    // Check for cancellation
+    if (store.getState().async.cancelled) {
+      store.dispatch(actions.addLog('Operação cancelada antes de iniciar K-means'));
+      return null;
+    }
+
+    // Step 5: Prepare data for K-means
+    // Create shared buffers with capacity = dataset.length
+    const capacity = finalDataset.length;
+    const buffers = createSharedCityBuffers(capacity);
+    store.dispatch(actions.addLog(`Criando buffers compartilhados (capacidade: ${capacity})`));
+
+    // Fill buffers with dataset cities
+    finalDataset.forEach((city, index) => {
+      // Use index as localIndex (since we're filling sequentially)
+      writeCity(buffers, {
+        id: city.id,
+        latitude: city.latitude || 0,
+        longitude: city.longitude || 0,
+        population: city.population || 0
+      }, index);
+      
+      // Store ID in idsLocal array
+      buffers.idsLocal[index] = String(city.id);
+    });
+
+    // Update writeIndex to reflect the actual count
+    buffers.writeIndex[0] = capacity;
+    
+    store.dispatch(actions.setBulkLoaded(capacity));
+    store.dispatch(actions.setProgress(100));
+    store.dispatch(actions.addLog(`Dataset preparado: ${capacity} cidade(s) prontas para K-means (k=${k})`));
 
     // Check for cancellation before K-means
     if (store.getState().async.cancelled) {
+      store.dispatch(actions.addLog('Operação cancelada antes de iniciar K-means'));
       return null;
     }
 
-    // Start K-means clustering
+    // Step 6: Start K-means clustering (parallel with single-thread fallback)
     const kmeansStartTime = performance.now();
     store.dispatch(actions.setStatus('clustering'));
     store.dispatch(actions.setProgress(0));
-    store.dispatch(actions.addLog(`Iniciando K-means com k=${k}...`));
+    
+    // Determine number of workers
+    const hardwareConcurrency = navigator.hardwareConcurrency || 4;
+    const kmeansWorkerCount = Math.max(2, Math.min(8, hardwareConcurrency - 1));
+    
+    store.dispatch(actions.addLog(`Iniciando K-means paralelo com ${kmeansWorkerCount} workers (k=${k})...`));
 
-    const kmeansWorkerCount = Math.max(2, Math.min(8, workerCount));
+    let kmeansResult;
+    let workersUsed = kmeansWorkerCount;
 
-    const kmeansResult = await runKmeans(buffers, k, {
-      maxIter: 100,
-      epsilon: 0.0001,
-      workerCount: kmeansWorkerCount,
-      isCancelled: () => store.getState().async.cancelled,
-      onPoolCreated: (pool) => {
-        if (onPoolCreated) {
-          onPoolCreated(pool);
+    try {
+      // Try parallel version first
+      kmeansResult = await kmeansParallel(finalDataset, k, {
+        maxIter: 100,
+        epsilon: 0.0001,
+        seed: Date.now(),
+        workerCount: kmeansWorkerCount,
+        isCancelled: () => store.getState().async.cancelled,
+        onPoolCreated: (pool) => {
+          // Store pool reference for cancellation
+          if (onPoolCreated) {
+            onPoolCreated(pool);
+          }
+        },
+        onProgress: (progress) => {
+          const progressPercent = Math.min(100, Math.round((progress.iteration / 100) * 100));
+          store.dispatch(actions.setProgress(progressPercent));
+          store.dispatch(actions.setKmeansIterations(progress.iteration));
+          store.dispatch(actions.addLog(`Iteração ${progress.iteration}: mudança média = ${progress.avgChange.toFixed(6)}`));
+          
+          if (progress.converged) {
+            store.dispatch(actions.addLog(`Convergência atingida!`));
+          }
         }
-      },
-      onProgress: (progress) => {
-        const progressPercent = Math.min(100, Math.round((progress.iteration / 100) * 100));
-        store.dispatch(actions.setProgress(progressPercent));
-        store.dispatch(actions.setKmeansIterations(progress.iteration));
-        store.dispatch(actions.addLog(`Iteração ${progress.iteration}: mudança média = ${progress.avgChange.toFixed(6)}`));
-        
-        if (progress.converged) {
-          store.dispatch(actions.addLog(`Convergência atingida!`));
-        }
+      });
+    } catch (error) {
+      // Fallback to single-thread if parallel fails
+      if (error.message === 'K-means cancelled') {
+        throw error; // Re-throw cancellation
       }
-    });
+
+      store.dispatch(actions.addLog(`Aviso: K-means paralelo falhou (${error.message}), usando versão single-thread...`));
+      workersUsed = 1;
+
+      kmeansResult = kmeansSingle(finalDataset, k, {
+        maxIter: 100,
+        epsilon: 0.0001,
+        seed: Date.now(),
+        onProgress: (progress) => {
+          const progressPercent = Math.min(100, Math.round((progress.iteration / 100) * 100));
+          store.dispatch(actions.setProgress(progressPercent));
+          store.dispatch(actions.setKmeansIterations(progress.iteration));
+          store.dispatch(actions.addLog(`Iteração ${progress.iteration}: mudança média = ${progress.avgChange.toFixed(6)}`));
+          
+          if (progress.converged) {
+            store.dispatch(actions.addLog(`Convergência atingida!`));
+          }
+        }
+      });
+    }
 
     const kmeansEndTime = performance.now();
     const kmeansTimeMs = kmeansEndTime - kmeansStartTime;
@@ -597,18 +665,46 @@ async function startBulkLoadAndKmeans(store) {
     
     // Log cluster sizes
     kmeansResult.clusterSizes.forEach((size, i) => {
-      store.dispatch(actions.addLog(`Cluster ${i}: ${size} cidades`));
+      store.dispatch(actions.addLog(`Cluster ${i}: ${size} cidade(s)`));
     });
 
+    // Transform clusters to include index and limit sampleCities to 30
+    // Keep all cities in cluster.cities for potential export, but use sampleCities for display
+    const formattedClusters = kmeansResult.clusters.map((cluster, index) => ({
+      index,
+      size: cluster.size || 0,
+      centroid: cluster.centroid || {},
+      cities: cluster.cities || [], // Keep all cities for reference
+      sampleCities: (cluster.cities || []).slice(0, 30) // Limit to 30 cities for display
+    }));
+
+    // Store assignments by city ID for export (if not too heavy)
+    // Map city IDs to cluster assignments
+    // Note: assignments array index corresponds to finalDataset index
+    const assignmentsById = {};
+    if (kmeansResult.assignments && finalDataset.length <= 10000) {
+      // Only include assignments if dataset is not too large (to avoid heavy JSON)
+      for (let i = 0; i < finalDataset.length && i < kmeansResult.assignments.length; i++) {
+        const city = finalDataset[i];
+        if (city && city.id) {
+          assignmentsById[String(city.id)] = kmeansResult.assignments[i];
+        }
+      }
+    }
+
     // Update state with results and metrics
-    store.dispatch(actions.setClusters(kmeansResult.clusters));
+    store.dispatch(actions.setClusters(formattedClusters));
     store.dispatch(actions.setKmeansIterations(kmeansResult.iterations));
     store.dispatch(actions.setKmeansStatus('done'));
     store.dispatch(actions.setKmeansMetrics({
-      loadTimeMs,
+      loadTimeMs: 0, // No bulk loading in this flow
       kmeansTimeMs,
       totalTimeMs,
-      workersUsed: kmeansWorkerCount
+      workersUsed: workersUsed,
+      k: k,
+      datasetSize: finalDataset.length,
+      radiusKm: radiusKm,
+      assignmentsById: Object.keys(assignmentsById).length > 0 ? assignmentsById : null
     }));
     store.dispatch(actions.setProgress(100));
     store.dispatch(actions.setStatus('done'));
@@ -617,19 +713,24 @@ async function startBulkLoadAndKmeans(store) {
   } catch (error) {
     // Check if it was a cancellation
     if (error.message === 'K-means cancelled' || store.getState().async.cancelled) {
-      store.dispatch(actions.addLog('K-means cancelado pelo usuário'));
+      store.dispatch(actions.addLog('Operação cancelada pelo usuário'));
       store.dispatch(actions.setStatus('idle'));
+      store.dispatch(actions.setProgress(0));
+      store.dispatch(actions.addLog('Cidades selecionadas preservadas.'));
       return null;
     }
     
-    // Handle other errors
+    // Handle other errors - preserve selected cities
     const errorMessage = error.message || 'Erro desconhecido';
-    store.dispatch(actions.setError(errorMessage));
+    const userFriendlyMessage = `Erro durante processamento: ${errorMessage}. As cidades selecionadas foram preservadas.`;
+    
+    store.dispatch(actions.setError(userFriendlyMessage));
     store.dispatch(actions.setStatus('error'));
     store.dispatch(actions.addLog(`Erro: ${errorMessage}`));
+    store.dispatch(actions.addLog('Cidades selecionadas preservadas.'));
     
     // Keep UI functional - don't crash
-    console.error('Error during bulk load/kmeans:', error);
+    console.error('Error during radius search/kmeans:', error);
   }
   
   return null;

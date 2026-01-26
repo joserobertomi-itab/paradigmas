@@ -69,6 +69,32 @@ npm run dev
 - Headers Cross-Origin Isolation (COOP/COEP) configurados no servidor
 - O arquivo `vite.config.js` já está configurado com esses headers automaticamente
 
+### Configuração de SharedArrayBuffer (COOP/COEP)
+
+O projeto usa **SharedArrayBuffer** para compartilhar dados entre Web Workers sem cópia, melhorando significativamente a performance do K-means paralelo.
+
+**Requisitos**:
+1. **HTTPS ou localhost**: SharedArrayBuffer só funciona em contextos seguros
+2. **Headers COOP/COEP**: Configurados automaticamente no `vite.config.js`:
+   ```javascript
+   server: {
+     headers: {
+       'Cross-Origin-Opener-Policy': 'same-origin',
+       'Cross-Origin-Embedder-Policy': 'require-corp'
+     }
+   }
+   ```
+
+**Como funciona**:
+- O servidor de desenvolvimento (`npm run dev`) já inclui esses headers
+- Em produção, você precisa configurar esses headers no servidor web (nginx, Apache, etc.)
+- Sem esses headers, o código faz fallback automático para versão single-thread
+
+**Verificação**:
+- Abra o console do navegador
+- Se SharedArrayBuffer estiver disponível, você verá logs de processamento paralelo
+- Se não estiver, verá aviso e fallback para single-thread
+
 ## 📁 Onde Estão os Conceitos Implementados
 
 ### 1. Consumo Assíncrono
@@ -253,9 +279,103 @@ export function selectSelectedCities(state) {
 }
 ```
 
-### 6. Implementação do K-means
+### 6. Fluxo de Clustering com Endpoint /radius
 
-**Localização**: `src/kmeans/kmeans.js`, `src/workers/kmeansWorker.js`
+**Localização**: `src/app/events.js`, `src/api/geodbClient.js`
+
+#### Endpoint `/api/v1/cities/radius`
+
+O endpoint `/radius` recebe uma lista de IDs de cidades de referência e um raio em quilômetros, retornando todas as cidades dentro do raio dessas referências.
+
+**⚠️ Comportamento Importante**:
+- O endpoint **NÃO retorna as cidades de referência** (as selecionadas pelo usuário)
+- Apenas retorna cidades **dentro do raio**, excluindo as próprias referências
+- Isso é um comportamento do endpoint da API FastAPI
+
+#### Construção do Dataset Final
+
+Como o endpoint não retorna as cidades de referência, o dataset final é construído através de uma união:
+
+```javascript
+dataset = uniqueById(radiusCities ∪ selectedCities)
+```
+
+Onde:
+- `radiusCities`: Cidades retornadas pelo endpoint `/radius` (dentro do raio)
+- `selectedCities`: Cidades selecionadas pelo usuário (referências)
+- `uniqueById`: Remove duplicatas por ID (se uma cidade do raio já é uma referência, mantém a versão da referência)
+
+**Por que isso é necessário para o K-means?**
+
+1. **Preservar os "centros" escolhidos pelo usuário**: As cidades selecionadas representam pontos de interesse específicos que o usuário quer incluir no clustering. Sem incluí-las, perderíamos esses pontos de referência.
+
+2. **Garantir representatividade**: As cidades de referência podem ser importantes para o contexto do clustering (ex: cidades principais de uma região). Excluí-las poderia resultar em clusters que não refletem a intenção do usuário.
+
+3. **Completude do dataset**: O dataset final deve incluir tanto as cidades próximas (do raio) quanto as cidades de referência para um clustering completo e significativo.
+
+**Exemplo**:
+- Usuário seleciona: São Paulo (ID: 123), Rio de Janeiro (ID: 456)
+- Chama `/radius` com raio 100km
+- Retorna: 50 cidades dentro do raio (mas não inclui São Paulo nem Rio)
+- Dataset final: 50 cidades do raio + 2 cidades selecionadas = 52 cidades (sem duplicatas)
+
+#### Diagrama do Fluxo Completo
+
+```mermaid
+graph TD
+    A[Usuário seleciona cidades] --> B[Obter selectedCities e selectedIds do estado]
+    B --> C[Obter radiusKm e k do estado]
+    C --> D{Validações}
+    D -->|Sem selecionadas| E[Erro: Nenhuma cidade selecionada]
+    D -->|k inválido| F[Erro: k inválido]
+    D -->|OK| G[Chamar /radius API]
+    
+    G --> H[findCitiesWithinRadius<br/>cityIds, radiusKm]
+    H --> I[API retorna radiusCities<br/>NÃO inclui referências]
+    
+    I --> J[Construir dataset final]
+    J --> K[dataset = uniqueById<br/>radiusCities ∪ selectedCities]
+    
+    K --> L[Validar k]
+    L -->|k < 2 ou k > dataset.length| M[Erro: k inválido]
+    L -->|OK| N[Criar SharedArrayBuffer<br/>para vetores normalizados]
+    
+    N --> O[Normalizar vetores<br/>min-max normalization]
+    O --> P[Inicializar centroides<br/>randomInit com seed]
+    
+    P --> Q[K-means Loop]
+    Q --> R[Map Phase: Workers paralelos]
+    R --> S[Worker 1: Fatia 1]
+    R --> T[Worker 2: Fatia 2]
+    R --> U[Worker N: Fatia N]
+    
+    S --> V[Calcular distâncias<br/>Atribuir clusters<br/>Acumular somas]
+    T --> V
+    U --> V
+    
+    V --> W[Reduce Phase: Main Thread]
+    W --> X[Combinar somas parciais]
+    X --> Y[Calcular novos centroides]
+    Y --> Z{Convergiu?}
+    
+    Z -->|Não| Q
+    Z -->|Sim| AA[Denormalizar centroides]
+    
+    AA --> AB[Construir clusters finais]
+    AB --> AC[Salvar no estado:<br/>clusters, metrics, assignments]
+    AC --> AD[Renderizar resultados]
+    
+    style A fill:#e1f5ff
+    style G fill:#fff4e1
+    style K fill:#e8f5e9
+    style R fill:#f3e5f5
+    style W fill:#e8f5e9
+    style AD fill:#c8e6c9
+```
+
+### 7. Implementação do K-means
+
+**Localização**: `src/kmeans/kmeans.js`, `src/kmeans/kmeansParallel.js`, `src/workers/kmeansWorker.js`
 
 #### Passo a Passo
 
@@ -514,6 +634,45 @@ graph TD
     style O fill:#f3e5f5
 ```
 
+### Fluxo Completo: Selecionadas → /radius → K-means
+
+```mermaid
+graph TD
+    A[Cidades Selecionadas<br/>selectedCities] --> B[Obter IDs<br/>selectedIds]
+    B --> C[Chamar /radius API<br/>findCitiesWithinRadius]
+    C --> D[API retorna radiusCities<br/>⚠️ NÃO inclui referências]
+    
+    A --> E[União de Datasets]
+    D --> E
+    E --> F[dataset = uniqueById<br/>radiusCities ∪ selectedCities]
+    
+    F --> G[Validar k<br/>k >= 2 e k <= dataset.length]
+    G -->|Inválido| H[Erro: k inválido]
+    G -->|OK| I[Normalizar vetores<br/>min-max normalization]
+    
+    I --> J[Criar SharedArrayBuffer<br/>para vetores normalizados]
+    J --> K[Inicializar centroides<br/>randomInit com seed]
+    
+    K --> L[K-means Paralelo<br/>Workers + SharedArrayBuffer]
+    L --> M[Map: Workers processam fatias]
+    M --> N[Reduce: Combinar somas]
+    N --> O{Convergiu?}
+    
+    O -->|Não| L
+    O -->|Sim| P[Denormalizar centroides]
+    P --> Q[Construir clusters<br/>com cidades]
+    Q --> R[Salvar no estado]
+    R --> S[Renderizar clusters]
+    
+    style A fill:#e1f5ff
+    style C fill:#fff4e1
+    style D fill:#ffebee
+    style E fill:#e8f5e9
+    style F fill:#e8f5e9
+    style L fill:#f3e5f5
+    style S fill:#c8e6c9
+```
+
 ### Arquitetura de Memória Compartilhada
 
 ```mermaid
@@ -562,31 +721,29 @@ graph LR
 
 **Resultado esperado**: Seleção funciona, estado preservado entre páginas.
 
-### 3. Carregar 10k Cidades
+### 3. Rodar K-means com Cidades Selecionadas
 
-1. Configure k=5 no campo numérico
-2. Clique em "Carregar ~10k cidades..."
-3. Observe:
+1. Selecione pelo menos uma cidade (clique em "Adicionar")
+2. Configure o raio (km) no campo "Raio (km)" (padrão: 100)
+3. Configure k no campo "k (número de clusters)" (padrão: 5, mínimo: 2)
+4. Clique em "Carregar cidades no raio + Rodar K-means"
+5. Observe:
    - Status muda para "loading"
-   - Barra de progresso atualiza
-   - Logs mostram progresso
-   - Botão "Cancelar" aparece
-4. Aguarde conclusão (~2-5 minutos)
-5. Verifique logs: workers usados, cidades carregadas, tempo
-
-**Resultado esperado**: ~10.000 cidades carregadas em paralelo.
-
-### 4. Rodar K-means
-
-1. Após carregamento, K-means inicia automaticamente
-2. Observe:
+   - Logs mostram busca de cidades no raio
    - Status muda para "clustering"
-   - Logs mostram iterações
+   - Logs mostram iterações do K-means
    - Mudança média por iteração diminui
-3. Aguarde convergência (~10-30 iterações)
-4. Verifique mensagem de convergência
+   - Botão "Cancelar" aparece durante processamento
+6. Aguarde convergência (~10-30 iterações)
+7. Verifique mensagem de convergência
 
-**Resultado esperado**: K-means converge, clusters criados.
+**Resultado esperado**: 
+- Cidades dentro do raio são encontradas
+- Dataset final inclui cidades do raio + cidades selecionadas (sem duplicatas)
+- K-means converge e cria clusters
+- Clusters são exibidos com centroides e amostra de cidades
+
+**Nota**: O endpoint `/radius` não retorna as cidades de referência (selecionadas), então elas são adicionadas manualmente ao dataset final para garantir que os "centros" escolhidos pelo usuário sejam incluídos no clustering.
 
 ### 5. Verificar Clusters
 
@@ -656,6 +813,8 @@ geodb-kmeans/
 - ✅ **Renderização Declarativa**: UI reativa
 - ✅ **Programação Funcional**: Reducers, funções puras
 - ✅ **Map/Reduce**: K-means paralelizado
+- ✅ **Endpoint /radius**: Busca cidades por raio geográfico
+- ✅ **Dataset Merge**: União de cidades do raio + referências selecionadas
 
 ## 📝 Scripts
 

@@ -1,57 +1,47 @@
 /**
  * Distance functions for K-means clustering
  * 
- * Uses 3D Euclidean distance: (latitude, longitude, population)
- * with simple normalization to handle different scales
+ * Pure functions for calculating distances between vectors
  */
 
 /**
- * Normalize a value to [0, 1] range
- * @param {number} value - Value to normalize
- * @param {number} min - Minimum value in dataset
- * @param {number} max - Maximum value in dataset
- * @returns {number} Normalized value [0, 1]
+ * Calculate Euclidean distance between two 3D vectors
+ * @param {Array<number>} vector1 - First vector [x, y, z]
+ * @param {Array<number>} vector2 - Second vector [x, y, z]
+ * @returns {number} Euclidean distance
  */
-function normalize(value, min, max) {
-  if (max === min) return 0.5; // Avoid division by zero
-  return (value - min) / (max - min);
+export function euclideanDistance(vector1, vector2) {
+  if (!vector1 || !vector2 || vector1.length !== vector2.length) {
+    return Infinity;
+  }
+
+  let sumSquaredDiffs = 0;
+  for (let i = 0; i < vector1.length; i++) {
+    const diff = vector1[i] - vector2[i];
+    sumSquaredDiffs += diff * diff;
+  }
+
+  return Math.sqrt(sumSquaredDiffs);
 }
 
 /**
- * Calculate Euclidean distance in 3D space (lat, lon, pop) with normalization
- * @param {Object} point1 - Point with latitude, longitude, population
- * @param {Object} point2 - Point with latitude, longitude, population
- * @param {Object} normalization - Normalization parameters { latMin, latMax, lonMin, lonMax, popMin, popMax }
- * @returns {number} Euclidean distance
+ * Calculate squared Euclidean distance (faster, avoids sqrt)
+ * @param {Array<number>} vector1 - First vector
+ * @param {Array<number>} vector2 - Second vector
+ * @returns {number} Squared Euclidean distance
  */
-export function euclideanDistance(point1, point2, normalization = null) {
-  if (!point1 || !point2) return Infinity;
-
-  let lat1 = point1.latitude || 0;
-  let lon1 = point1.longitude || 0;
-  let pop1 = point1.population || 0;
-
-  let lat2 = point2.latitude || 0;
-  let lon2 = point2.longitude || 0;
-  let pop2 = point2.population || 0;
-
-  // Apply normalization if provided
-  if (normalization) {
-    lat1 = normalize(lat1, normalization.latMin, normalization.latMax);
-    lon1 = normalize(lon1, normalization.lonMin, normalization.lonMax);
-    pop1 = normalize(pop1, normalization.popMin, normalization.popMax);
-
-    lat2 = normalize(lat2, normalization.latMin, normalization.latMax);
-    lon2 = normalize(lon2, normalization.lonMin, normalization.lonMax);
-    pop2 = normalize(pop2, normalization.popMin, normalization.popMax);
+export function euclideanDistanceSquared(vector1, vector2) {
+  if (!vector1 || !vector2 || vector1.length !== vector2.length) {
+    return Infinity;
   }
 
-  // Calculate 3D Euclidean distance
-  const dLat = lat1 - lat2;
-  const dLon = lon1 - lon2;
-  const dPop = pop1 - pop2;
+  let sumSquaredDiffs = 0;
+  for (let i = 0; i < vector1.length; i++) {
+    const diff = vector1[i] - vector2[i];
+    sumSquaredDiffs += diff * diff;
+  }
 
-  return Math.sqrt(dLat * dLat + dLon * dLon + dPop * dPop);
+  return sumSquaredDiffs;
 }
 
 /**

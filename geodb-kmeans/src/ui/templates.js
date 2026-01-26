@@ -90,22 +90,27 @@ export function clusterCard(cluster, index, isVisible = true) {
   if (!cluster) return '';
   
   const centroid = cluster.centroid || {};
-  const cities = cluster.cities || [];
-  const size = cluster.size || cities.length;
+  // Use sampleCities if available, otherwise fallback to cities
+  const sampleCities = cluster.sampleCities || cluster.cities || [];
+  const size = cluster.size || sampleCities.length;
   const displayStyle = isVisible ? '' : 'display: none;';
 
   const centroidLat = centroid.latitude?.toFixed(4) || 'N/A';
   const centroidLon = centroid.longitude?.toFixed(4) || 'N/A';
   const centroidPop = centroid.population ? Math.round(centroid.population).toLocaleString() : 'N/A';
 
-  // Limit sample to 30 cities for performance
-  const sampleCities = cities.slice(0, 30);
-  const remainingCount = cities.length > 30 ? cities.length - 30 : 0;
+  // Check if there are more cities beyond the sample (30)
+  // sampleCities is already limited to 30, but we need to check against all cities
+  const allCities = cluster.cities || sampleCities;
+  const remainingCount = allCities.length > sampleCities.length ? allCities.length - sampleCities.length : 0;
+
+  // Use cluster.index if available, otherwise use passed index
+  const clusterIndex = cluster.index !== undefined ? cluster.index : index;
 
   return `
-    <div class="cluster-card-detailed" data-cluster-id="${index}" style="${displayStyle}">
+    <div class="cluster-card-detailed" data-cluster-id="${clusterIndex}" style="${displayStyle}">
       <div class="cluster-header">
-        <h3 class="cluster-title">Cluster ${index} (n=${size})</h3>
+        <h3 class="cluster-title">Cluster ${clusterIndex} (n=${size})</h3>
       </div>
       <div class="cluster-centroid">
         <h4>Centroide</h4>
@@ -159,15 +164,18 @@ export function clusterList(clusters, filterId = null) {
     console.log('[Cluster List] Filter state:', { filterId, filterNum, clustersCount: clusters.length });
   }
 
-  clusters.forEach((cluster, index) => {
+  clusters.forEach((cluster) => {
+    // Use cluster.index if available, otherwise use array index
+    const clusterIndex = cluster.index !== undefined ? cluster.index : clusters.indexOf(cluster);
+    
     // Show all if filter is null, otherwise show only matching cluster
-    const isVisible = filterNum === null || filterNum === index;
+    const isVisible = filterNum === null || filterNum === clusterIndex;
     
     if (import.meta.env.DEV && filterNum !== null) {
-      console.log(`[Cluster List] Cluster ${index}: isVisible=${isVisible}, filterNum=${filterNum}, index=${index}`);
+      console.log(`[Cluster List] Cluster ${clusterIndex}: isVisible=${isVisible}, filterNum=${filterNum}`);
     }
     
-    const cardHTML = clusterCard(cluster, index, isVisible);
+    const cardHTML = clusterCard(cluster, clusterIndex, isVisible);
     const tempDiv = document.createElement('div');
     tempDiv.innerHTML = cardHTML;
     container.appendChild(tempDiv.firstElementChild);

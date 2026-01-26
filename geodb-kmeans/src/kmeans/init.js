@@ -1,37 +1,41 @@
 /**
  * K-means initialization methods
+ * Pure functions for deterministic centroid initialization
  */
 
 /**
- * Simple random initialization with seed control
- * @param {Array<Object>} data - Array of data points
+ * Seeded random number generator (Linear Congruential Generator)
+ * @param {number} seed - Initial seed value
+ * @returns {Function} Random number generator function
+ */
+function createSeededRandom(seed) {
+  let state = seed;
+  return () => {
+    // LCG parameters (same as used in many systems)
+    state = (state * 9301 + 49297) % 233280;
+    return state / 233280;
+  };
+}
+
+/**
+ * Deterministic random initialization with seed
+ * @param {Array<Array<number>>} vectors - Array of 3D vectors
  * @param {number} k - Number of clusters
  * @param {number} seed - Random seed for reproducibility
- * @returns {Array<Object>} Initial centroids
+ * @returns {Array<Array<number>>} Initial centroids as vectors
  */
-export function randomInit(data, k, seed = null) {
-  if (!data || data.length === 0 || k <= 0) {
+export function randomInit(vectors, k, seed = null) {
+  if (!vectors || vectors.length === 0 || k <= 0) {
     return [];
   }
 
-  if (k >= data.length) {
-    // If k >= data.length, return all points as centroids
-    return data.slice(0, k).map(p => ({
-      latitude: p.latitude || 0,
-      longitude: p.longitude || 0,
-      population: p.population || 0
-    }));
+  if (k >= vectors.length) {
+    // If k >= vectors.length, return all vectors as centroids
+    return vectors.slice(0, k).map(v => [...v]); // Copy vectors
   }
 
-  // Simple seeded random number generator
-  let random = Math.random;
-  if (seed !== null) {
-    let seedValue = seed;
-    random = () => {
-      seedValue = (seedValue * 9301 + 49297) % 233280;
-      return seedValue / 233280;
-    };
-  }
+  // Create seeded random generator
+  const random = seed !== null ? createSeededRandom(seed) : Math.random;
 
   const centroids = [];
   const usedIndices = new Set();
@@ -39,16 +43,12 @@ export function randomInit(data, k, seed = null) {
   for (let i = 0; i < k; i++) {
     let index;
     do {
-      index = Math.floor(random() * data.length);
+      index = Math.floor(random() * vectors.length);
     } while (usedIndices.has(index));
 
     usedIndices.add(index);
-    const point = data[index];
-    centroids.push({
-      latitude: point.latitude || 0,
-      longitude: point.longitude || 0,
-      population: point.population || 0
-    });
+    // Copy vector to avoid mutation
+    centroids.push([...vectors[index]]);
   }
 
   return centroids;
