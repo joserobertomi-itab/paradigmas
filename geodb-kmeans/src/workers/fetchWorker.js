@@ -1,11 +1,18 @@
 /**
- * Worker for fetching cities in parallel
- * 
- * This worker fetches pages in a strided pattern:
- * Worker i fetches offsets: i*pageSize, (i+W)*pageSize, (i+2W)*pageSize...
- * where W is the number of workers.
- * 
- * Note: This file must be loaded as a module worker (type: 'module')
+ * Worker for fetching cities in parallel from api/v1/cities only.
+ *
+ * Strided assignment: worker i fetches offsets i*pageSize, (i+W)*pageSize,
+ * (i+2*W)*pageSize, ... (W = totalWorkers). Stops when a page returns fewer than
+ * pageSize items, capacity is reached, or currentOffset >= endOffset.
+ *
+ * Rate limiting: per-worker queue with REQUEST_DELAY_MS and jitter to avoid
+ * saturating the API or triggering rate limits. Workers do not share a global
+ * limiter; main assigns distinct page subsets so load is spread.
+ *
+ * Writes: only to shared buffers via Atomics (allocateSlot). String IDs are
+ * sent to the main thread via city-ids messages; main fills idsLocal.
+ *
+ * Note: This file must be loaded as a module worker (type: 'module').
  */
 
 // Import shared memory functions
@@ -38,10 +45,10 @@ function writeCity(sharedBuffers, city, localIndex) {
   return slot;
 }
 
-// Rate limiting configuration
-const MAX_CONCURRENT_REQUESTS = 2; // Max concurrent requests per worker
-const REQUEST_DELAY_MS = 500; // Base delay between requests
-const JITTER_MS = 200; // Random jitter to avoid thundering herd
+// Rate limiting: per-worker throttling to avoid saturating api/v1/cities
+const MAX_CONCURRENT_REQUESTS = 2;
+const REQUEST_DELAY_MS = 500;
+const JITTER_MS = 200; // Jitter to avoid thundering herd
 
 let requestQueue = [];
 let activeRequests = 0;
@@ -145,6 +152,10 @@ function normalizeCity(city) {
 
 self.onmessage = async function(e) {
   const { taskId, payload } = e.data;
+  if (!payload) {
+    self.postMessage({ taskId, type: 'task-error', error: 'Missing payload' });
+    return;
+  }
   const {
     workerId,
     totalWorkers,
@@ -153,9 +164,13 @@ self.onmessage = async function(e) {
     endOffset,
     apiBaseUrl,
     sort,
-    sharedBuffers,
-    idsLocal
+    sharedBuffers
   } = payload;
+
+  if (!sharedBuffers || !sharedBuffers.writeIndex || sharedBuffers.capacity == null) {
+    self.postMessage({ taskId, type: 'task-error', error: 'Missing or invalid sharedBuffers (need writeIndex, capacity)' });
+    return;
+  }
 
   try {
     let fetched = 0;

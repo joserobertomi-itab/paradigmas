@@ -20,7 +20,11 @@ export default defineConfig({
       
       // Cross-Origin-Embedder-Policy: require-corp
       // Required for SharedArrayBuffer to work
-      'Cross-Origin-Embedder-Policy': 'require-corp'
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+
+      // Cross-Origin-Resource-Policy: same-origin
+      // Required so worker scripts and assets load when COEP is enabled
+      'Cross-Origin-Resource-Policy': 'same-origin'
     },
     // Ensure HTTPS is used in production (or localhost for dev)
     // SharedArrayBuffer only works with HTTPS or localhost

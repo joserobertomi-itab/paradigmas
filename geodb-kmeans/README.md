@@ -155,16 +155,16 @@ async function fetchCities(store, page, query, sort) {
 **Implementação**:
 
 **Fetch Worker** (`fetchWorker.js`):
-- Busca páginas de cidades em paralelo
-- Padrão strided (intercalado) para distribuição
-- Rate limiting por worker
-- Escrita atômica em SharedArrayBuffer
+- Busca páginas **apenas de** `api/v1/cities` (paginação com limit/offset)
+- Padrão strided (worker i faz offsets i×pageSize, (i+W)×pageSize, …) para distribuir páginas entre workers
+- **Rate limiting**: fila por worker com atraso (REQUEST_DELAY_MS) e jitter para não saturar a API
+- Escrita atômica em SharedArrayBuffer; IDs (strings) enviados ao main via mensagens `city-ids`
 
 **K-means Worker** (`kmeansWorker.js`):
-- Processa blocos de pontos
-- Calcula distâncias e atribui clusters
-- Retorna somas parciais (Map phase)
-- Não compartilha estado entre workers
+- **Implementação explícita** do K-means (sem biblioteca externa): distâncias e atualização de centroides no código
+- Processa fatias de pontos a partir do SharedArrayBuffer; calcula distâncias (lat/long/pop) e atribui ao cluster mais próximo
+- Retorna somas parciais (Map); o main faz Reduce (soma global, novo centroide) e controla convergência
+- Não compartilha estado entre workers; escrita apenas no main
 
 **Worker Pool** (`workerPool.js`):
 - Gerencia pool de workers
@@ -375,7 +375,9 @@ graph TD
 
 ### 7. Implementação do K-means
 
-**Localização**: `src/kmeans/kmeans.js`, `src/kmeans/kmeansParallel.js`, `src/workers/kmeansWorker.js`
+O K-means é implementado **explicitamente** no código (sem biblioteca externa de clustering). As métricas de similaridade usadas são **latitude, longitude e população**; a distância é euclidiana sobre vetores normalizados (min-max). Workers calculam distâncias e somas parciais; o main thread faz Reduce (novos centroides) e verifica convergência.
+
+**Localização**: `src/kmeans/kmeans.js`, `src/kmeans/kmeansParallel.js`, `src/workers/kmeansWorker.js`, `src/kmeans/distance.js`, `src/kmeans/init.js`, `src/kmeans/normalize.js`
 
 #### Passo a Passo
 
@@ -634,43 +636,33 @@ graph TD
     style O fill:#f3e5f5
 ```
 
-### Fluxo Completo: Selecionadas → /radius → K-means
+### Fluxo Completo: api/v1/cities → memória compartilhada → K-means
+
+O botão "Carregar cidades (API) + Rodar K-means" usa **apenas** o endpoint `api/v1/cities` (paginação). Não é necessário selecionar cidades.
+
+1. **Bulk load**: Main cria SharedArrayBuffer (capacidade fixa) e um pool de fetch workers. Cada worker recebe um subconjunto **strided** de páginas (worker i: offsets i×pageSize, (i+W)×pageSize, …). Workers fazem GET `api/v1/cities?limit=&offset=` em paralelo, com **rate limiting por worker** (fila + atraso + jitter) para não saturar a API. Cada worker aloca slot com `Atomics.add(writeIndex)`, escreve lat/long/pop no SAB e envia `{ slot, id }` ao main; o main preenche `idsLocal[slot]`.
+2. **Após todos os workers**: Main lê `getAllCities(buffers)`, valida k e inicia K-means no dataset em memória.
+3. **K-means**: Implementação **explícita** (sem biblioteca externa) em `kmeansParallel.js` e `kmeansWorker.js`: workers calculam distâncias (lat/long/pop) e somas parciais; main faz Reduce (novos centroides) e verifica convergência.
 
 ```mermaid
 graph TD
-    A[Cidades Selecionadas<br/>selectedCities] --> B[Obter IDs<br/>selectedIds]
-    B --> C[Chamar /radius API<br/>findCitiesWithinRadius]
-    C --> D[API retorna radiusCities<br/>⚠️ NÃO inclui referências]
-    
-    A --> E[União de Datasets]
-    D --> E
-    E --> F[dataset = uniqueById<br/>radiusCities ∪ selectedCities]
-    
-    F --> G[Validar k<br/>k >= 2 e k <= dataset.length]
-    G -->|Inválido| H[Erro: k inválido]
-    G -->|OK| I[Normalizar vetores<br/>min-max normalization]
-    
-    I --> J[Criar SharedArrayBuffer<br/>para vetores normalizados]
-    J --> K[Inicializar centroides<br/>randomInit com seed]
-    
-    K --> L[K-means Paralelo<br/>Workers + SharedArrayBuffer]
-    L --> M[Map: Workers processam fatias]
-    M --> N[Reduce: Combinar somas]
-    N --> O{Convergiu?}
-    
-    O -->|Não| L
-    O -->|Sim| P[Denormalizar centroides]
-    P --> Q[Construir clusters<br/>com cidades]
-    Q --> R[Salvar no estado]
-    R --> S[Renderizar clusters]
+    A[Clique: Carregar cidades API + K-means] --> B[Criar SharedArrayBuffer<br/>createSharedCityBuffers]
+    B --> C[Pool de Fetch Workers<br/>api/v1/cities apenas]
+    C --> D[Workers: páginas strided<br/>rate limit por worker]
+    D --> E[Escrita atômica no SAB<br/>city-ids → main preenche idsLocal]
+    E --> F[getAllCities buffers]
+    F --> G[Validar k]
+    G -->|OK| H[K-means paralelo<br/>workers: distâncias + somas]
+    H --> I[Main: Reduce + centroides]
+    I --> J{Convergiu?}
+    J -->|Não| H
+    J -->|Sim| K[Clusters no estado]
     
     style A fill:#e1f5ff
     style C fill:#fff4e1
-    style D fill:#ffebee
     style E fill:#e8f5e9
-    style F fill:#e8f5e9
-    style L fill:#f3e5f5
-    style S fill:#c8e6c9
+    style H fill:#f3e5f5
+    style K fill:#c8e6c9
 ```
 
 ### Arquitetura de Memória Compartilhada
@@ -721,29 +713,24 @@ graph LR
 
 **Resultado esperado**: Seleção funciona, estado preservado entre páginas.
 
-### 3. Rodar K-means com Cidades Selecionadas
+### 3. Rodar K-means (carregamento em massa da API)
 
-1. Selecione pelo menos uma cidade (clique em "Adicionar")
-2. Configure o raio (km) no campo "Raio (km)" (padrão: 100)
-3. Configure k no campo "k (número de clusters)" (padrão: 5, mínimo: 2)
-4. Clique em "Carregar cidades no raio + Rodar K-means"
-5. Observe:
+1. Configure k no campo "k (número de clusters)" (padrão: 5, mínimo: 2). Não é necessário selecionar cidades.
+2. Clique em "Carregar cidades (API) + Rodar K-means"
+3. Observe:
    - Status muda para "loading"
-   - Logs mostram busca de cidades no raio
+   - Logs mostram carregamento em massa de `api/v1/cities` com N workers
+   - Progresso de cidades carregadas em memória compartilhada
    - Status muda para "clustering"
-   - Logs mostram iterações do K-means
-   - Mudança média por iteração diminui
+   - Logs mostram iterações do K-means (mudança média por iteração)
    - Botão "Cancelar" aparece durante processamento
-6. Aguarde convergência (~10-30 iterações)
-7. Verifique mensagem de convergência
+4. Aguarde convergência (~10-30 iterações)
+5. Verifique mensagem de convergência
 
-**Resultado esperado**: 
-- Cidades dentro do raio são encontradas
-- Dataset final inclui cidades do raio + cidades selecionadas (sem duplicatas)
-- K-means converge e cria clusters
-- Clusters são exibidos com centroides e amostra de cidades
-
-**Nota**: O endpoint `/radius` não retorna as cidades de referência (selecionadas), então elas são adicionadas manualmente ao dataset final para garantir que os "centros" escolhidos pelo usuário sejam incluídos no clustering.
+**Resultado esperado**:
+- Cidades são obtidas apenas de `api/v1/cities` (paginação), em paralelo por workers
+- Dataset é preenchido em SharedArrayBuffer; em seguida K-means roda sobre esse dataset
+- K-means converge e clusters são exibidos com centroides e amostra de cidades (lat/long/pop)
 
 ### 5. Verificar Clusters
 

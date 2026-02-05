@@ -1,7 +1,8 @@
 /**
- * Parallel K-means clustering orchestrator
- * 
- * Divides work among Web Workers and reduces results
+ * Parallel K-means clustering orchestrator (explicit implementation, no external library).
+ *
+ * Similarity dimensions: latitude, longitude, population. Workers compute distances
+ * and partial sums; main thread reduces to new centroids and checks convergence.
  */
 
 import { toVector, validateCity } from './schema.js';
@@ -10,6 +11,7 @@ import { euclideanDistanceSquared } from './distance.js';
 import { randomInit } from './init.js';
 import { createWorkerPool } from '../workers/workerPool.js';
 import { createSharedPoints, getSliceMeta } from '../workers/sharedPoints.js';
+import KmeansWorker from '../workers/kmeansWorker.js?worker&inline';
 
 /**
  * Calculate average change in centroids
@@ -104,9 +106,8 @@ export async function kmeansParallel(cities, k, options = {}) {
   // Initialize centroids deterministically
   let centroids = randomInit(normalizedVectors, k, seed);
 
-  // Create worker pool
-  const workerUrl = new URL('../workers/kmeansWorker.js', import.meta.url).href;
-  const pool = createWorkerPool({ size: workerCount, workerUrl });
+  // Create worker pool (Vite ?worker for correct bundling)
+  const pool = createWorkerPool({ size: workerCount, WorkerConstructor: KmeansWorker });
 
   // Notify pool creation
   if (onPoolCreated) {

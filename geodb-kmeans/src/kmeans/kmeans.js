@@ -7,6 +7,7 @@
 import { randomInit } from './init.js';
 import { calculateNormalization } from './distance.js';
 import { createWorkerPool } from '../workers/workerPool.js';
+import KmeansWorker from '../workers/kmeansWorker.js?worker&inline';
 
 /**
  * Run K-means clustering with parallel workers
@@ -62,9 +63,8 @@ export async function kmeans(buffers, k, options = {}) {
   }
   let centroids = randomInit(allPoints, k, Date.now());
 
-  // Create worker pool
-  const workerUrl = new URL('../workers/kmeansWorker.js', import.meta.url).href;
-  const pool = createWorkerPool({ size: workerCount, workerUrl });
+  // Create worker pool (Vite ?worker for correct bundling)
+  const pool = createWorkerPool({ size: workerCount, WorkerConstructor: KmeansWorker });
   
   // Notify pool creation for cancellation support
   if (onPoolCreated) {

@@ -1,10 +1,16 @@
 /**
  * Shared Memory for parallel city loading
- * 
- * Decision: API returns city IDs as strings, but SharedArrayBuffer requires numeric types.
- * Solution: Store string IDs in a regular array (idsLocal) in main thread,
- * and store only the local numeric index (Int32) in the shared buffer.
- * This allows efficient parallel writes while maintaining string ID lookup.
+ *
+ * API returns city IDs as strings; SharedArrayBuffer only supports numeric types.
+ * So string IDs live in idsLocal (main thread only); shared buffers hold numeric
+ * data (lat, lng, pop) and localIndices (Int32). readCity(buffers, slot) returns
+ * id from buffers.idsLocal[buffers.localIndices[slot]].
+ *
+ * Bulk load (fetch workers): each worker allocates a slot with Atomics, writes
+ * lat/lng/pop and sets localIndices[slot] = slot, then sends { slot, id } to main.
+ * Main thread fills idsLocal[slot] = id from city-ids messages. So after all
+ * workers complete, idsLocal[0..count-1] and localIndices[0..count-1]=0..count-1
+ * are consistent and getAllCities works.
  */
 
 /**

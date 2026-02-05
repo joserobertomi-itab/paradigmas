@@ -6,10 +6,11 @@
  * Create a worker pool
  * @param {Object} options - Configuration options
  * @param {number} options.size - Number of workers in pool
- * @param {string} options.workerUrl - URL to worker script
+ * @param {string} [options.workerUrl] - URL to worker script (use with new Worker(url, { type: 'module' }))
+ * @param {typeof Worker} [options.WorkerConstructor] - Vite ?worker constructor (preferred; use new WorkerConstructor())
  * @returns {Object} Worker pool instance
  */
-export function createWorkerPool({ size, workerUrl }) {
+export function createWorkerPool({ size, workerUrl, WorkerConstructor }) {
   const workers = [];
   let currentWorkerIndex = 0;
   let activeTasks = 0;
@@ -17,9 +18,13 @@ export function createWorkerPool({ size, workerUrl }) {
   const taskResolvers = new Map();
   let taskIdCounter = 0;
 
+  const createOne = WorkerConstructor
+    ? () => new WorkerConstructor()
+    : () => new Worker(workerUrl, { type: 'module' });
+
   // Create workers
   for (let i = 0; i < size; i++) {
-    const worker = new Worker(workerUrl, { type: 'module' });
+    const worker = createOne();
     
     worker.onmessage = (e) => {
       const { taskId, type, payload, error } = e.data;
@@ -49,11 +54,19 @@ export function createWorkerPool({ size, workerUrl }) {
       }
     };
 
-    worker.onerror = (error) => {
-      console.error('Worker error:', error);
-      // Reject all pending tasks for this worker
-      taskResolvers.forEach((resolver, id) => {
-        resolver.reject(error);
+    worker.onerror = (ev) => {
+      const parts = [];
+      if (ev?.message) parts.push(ev.message);
+      else if (ev?.error?.message) parts.push(ev.error.message);
+      else parts.push('Worker script error');
+      if (ev?.filename) parts.push(` at ${ev.filename}`);
+      if (ev?.lineno != null) parts.push(`:${ev.lineno}`);
+      if (ev?.colno != null) parts.push(`:${ev.colno}`);
+      const msg = parts.join('');
+      console.error('Worker error:', msg, ev);
+      const err = ev instanceof Error ? ev : new Error(msg);
+      taskResolvers.forEach((resolver) => {
+        resolver.reject(err);
       });
       taskResolvers.clear();
     };

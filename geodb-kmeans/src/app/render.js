@@ -20,6 +20,7 @@ import {
   selectAsyncStatus,
   selectAsyncProgress,
   selectAsyncLogs,
+  selectK,
   selectKmeansClusters,
   selectKmeansMetrics,
   selectKmeansIterations,
@@ -239,16 +240,12 @@ export function render(root, state) {
     nextPageBtn.disabled = results.length < pageSize;
   }
 
-  // Update run K-means button state
+  // Update run K-means button state (enabled when not running and k >= 2)
   if (runBulkKmeansBtn) {
-    const selectedCities = selectSelectedCities(state);
-    const selectedOrder = selectSelectedOrder(state);
     const status = selectAsyncStatus(state);
     const isRunning = status === 'loading' || status === 'clustering';
-    const hasSelected = (selectedCities && selectedCities.length > 0) || (selectedOrder && selectedOrder.length > 0);
-    
-    // Disable if no cities selected or if running
-    runBulkKmeansBtn.disabled = !hasSelected || isRunning;
+    const k = selectK(state);
+    runBulkKmeansBtn.disabled = isRunning || k < 2;
   }
 
   const cancelBtn = qs('#cancel-btn', root);

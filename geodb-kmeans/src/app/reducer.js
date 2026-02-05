@@ -351,6 +351,15 @@ export function reducer(state = initialState, action) {
         }
       };
 
+    case 'BULK/SET_TOTAL_TARGET':
+      return {
+        ...state,
+        bulk: {
+          ...state.bulk,
+          totalTarget: Math.max(0, action.payload || 0)
+        }
+      };
+
     // K-means actions
     case 'KMEANS/SET_CLUSTERS':
       return {
