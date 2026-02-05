@@ -28,6 +28,7 @@ import {
   selectSort,
   selectRadius
 } from './selectors.js';
+import { drawClusterPlot } from '../ui/clusterPlot.js';
 
 function escapeHtml(text) {
   if (text == null) return '';
@@ -154,7 +155,7 @@ export function render(root, state) {
         clustersContainer.id = 'clusters-container';
         clustersContainer.className = 'clusters-container';
         
-        // Create controls
+        // Create controls and plot section
         const controlsHTML = `
           <div class="clusters-controls">
             <h2>Clusters</h2>
@@ -166,6 +167,10 @@ export function render(root, state) {
               </select>
               <button id="export-json-btn" class="btn btn-secondary">Exportar JSON</button>
             </div>
+          </div>
+          <div id="clusters-plot-container" class="clusters-plot-container">
+            <h3>Visualização dos clusters</h3>
+            <canvas id="clusters-plot"></canvas>
           </div>
           <div id="clusters-list"></div>
         `;
@@ -202,6 +207,12 @@ export function render(root, state) {
     if (clustersListEl) {
       // Render immediately to ensure filter is applied
       setHTML(clustersListEl, clusterList(clusters, clusterFilter));
+    }
+
+    // Draw cluster plot
+    const plotCanvas = qs('#clusters-plot', clustersContainer);
+    if (plotCanvas) {
+      drawClusterPlot(plotCanvas, clusters, { padding: 20 });
     }
 
     // Render metrics panel
