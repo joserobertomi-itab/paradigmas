@@ -1,38 +1,5 @@
 import { createRateLimiter } from './rateLimit.js';
 
-// Cache for library import
-let GeoDBClientLib = null;
-let libraryImportPromise = null;
-
-/**
- * Try to import the official client library (lazy loading)
- */
-async function loadLibrary() {
-  if (GeoDBClientLib !== null) {
-    return GeoDBClientLib;
-  }
-
-  if (libraryImportPromise) {
-    return libraryImportPromise;
-  }
-
-  libraryImportPromise = (async () => {
-    try {
-      // Use dynamic import with string literal to avoid build-time resolution
-      const moduleName = 'wft-geodb-js-client';
-      const module = await import(/* @vite-ignore */ moduleName);
-      GeoDBClientLib = module.GeoDBClient || module.default || null;
-      return GeoDBClientLib;
-    } catch (e) {
-      // Library not available, will use fetch fallback
-      GeoDBClientLib = false; // Mark as attempted
-      return null;
-    }
-  })();
-
-  return libraryImportPromise;
-}
-
 /**
  * Normalize city data to stable format
  * Maps FastAPI CityRead format to internal format
@@ -145,31 +112,24 @@ class FetchGeoDBClient {
       // FastAPI returns a direct array of cities, not wrapped in {data, metadata}
       const cities = await response.json();
 
-      // Normalize cities
-      const data = (cities || []).map(normalizeCity).filter(Boolean);
+      // Normalize cities (pure: map + filter produce new array)
+      const normalized = (cities || []).map(normalizeCity).filter(Boolean);
 
-      // Client-side sorting if needed (FastAPI doesn't support sort yet)
-      if (sort) {
-        const sortField = sort.startsWith('-') ? sort.substring(1) : sort;
-        const sortOrder = sort.startsWith('-') ? 'desc' : 'asc';
-        
-        data.sort((a, b) => {
-          let aVal = a[sortField];
-          let bVal = b[sortField];
-          
-          // Handle numeric fields
-          if (sortField === 'population') {
-            aVal = aVal || 0;
-            bVal = bVal || 0;
-          }
-          
-          if (sortOrder === 'desc') {
-            return bVal > aVal ? 1 : bVal < aVal ? -1 : 0;
-          } else {
-            return aVal > bVal ? 1 : aVal < bVal ? -1 : 0;
-          }
-        });
-      }
+      // Immutable sort: copy then sort (no mutation of normalized)
+      const data = sort
+        ? [...normalized].sort((a, b) => {
+            const sortField = sort.startsWith('-') ? sort.slice(1) : sort;
+            const sortOrder = sort.startsWith('-') ? 'desc' : 'asc';
+            let aVal = a[sortField];
+            let bVal = b[sortField];
+            if (sortField === 'population') {
+              aVal = aVal || 0;
+              bVal = bVal || 0;
+            }
+            const cmp = aVal > bVal ? 1 : aVal < bVal ? -1 : 0;
+            return sortOrder === 'desc' ? -cmp : cmp;
+          })
+        : normalized;
 
       // Extract metadata (estimate based on response)
       // Since FastAPI doesn't return totalCount, we estimate hasMore based on limit
@@ -335,7 +295,7 @@ export async function createGeoDBClient(options = {}) {
  * @returns {Promise<Object>} Promise resolving to { data, metadata }
  */
 export async function findCities(params = {}) {
-  const client = await createGeoDBClient();
+  const client = await getDefaultClient();
   return client.findCities(params);
 }
 
@@ -350,27 +310,19 @@ export async function findCities(params = {}) {
  *       If you need the reference cities, include them separately in your use case.
  */
 export async function findCitiesWithinRadius({ cityIds, radiusKm }) {
-  const client = await createGeoDBClient();
+  const client = await getDefaultClient();
   return client.findCitiesWithinRadius({ cityIds, radiusKm });
 }
 
-// Export default client instance (lazy initialization)
-let defaultClient = null;
-let defaultClientPromise = null;
-
-export async function getDefaultClient() {
-  if (defaultClient) {
-    return defaultClient;
-  }
-
-  if (defaultClientPromise) {
-    return defaultClientPromise;
-  }
-
-  defaultClientPromise = createGeoDBClient().then(client => {
-    defaultClient = client;
-    return client;
-  });
-
-  return defaultClientPromise;
-}
+/**
+ * Default client getter with lazy initialization. State encapsulated in closure (no module-level mutable vars).
+ */
+export const getDefaultClient = (function () {
+  let clientPromise = null;
+  return async function getDefaultClient() {
+    if (!clientPromise) {
+      clientPromise = createGeoDBClient();
+    }
+    return clientPromise;
+  };
+})();

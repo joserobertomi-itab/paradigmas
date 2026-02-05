@@ -27,7 +27,7 @@ Este projeto implementa uma aplicação web completa para análise de dados geog
 
 - Node.js 20.19+ ou 22.12+
 - npm ou yarn
-- Chave da API RapidAPI (GeoDB Cities)
+- **Backend FastAPI** de cidades (este repositório pode ser usado junto ao `fastapi-app` do monorepo, ou outro backend que exponha `GET /api/v1/cities` e `GET /api/v1/cities/radius`)
 
 ### Instalação
 
@@ -44,18 +44,13 @@ npm install
 
 3. Configure as variáveis de ambiente:
 
-Crie um arquivo `.env` na raiz do projeto:
+Crie um arquivo `.env` na raiz do projeto (ou copie de `.envexample`):
 ```env
-VITE_RAPIDAPI_KEY=sua_chave_rapidapi_aqui
-VITE_RAPIDAPI_HOST=wft-geo-db.p.rapidapi.com
+# URL do backend de cidades (FastAPI)
+VITE_API_BASE_URL=http://localhost:8000
 ```
 
-**Como obter a chave da API:**
-1. Acesse [RapidAPI GeoDB Cities](https://rapidapi.com/wirefreethought/api/geodb-cities)
-2. Crie uma conta gratuita
-3. Inscreva-se no plano básico (gratuito)
-4. Copie sua chave da API
-5. Cole no arquivo `.env`
+Se o backend estiver em outra URL, ajuste `VITE_API_BASE_URL` (ex.: `http://localhost:8000`). O frontend consome `GET /api/v1/cities` (paginação/busca) e `GET /api/v1/cities/radius` (cidades no raio para K-means).
 
 4. Inicie o servidor de desenvolvimento:
 ```bash
@@ -150,15 +145,20 @@ async function fetchCities(store, page, query, sort) {
 
 ### 3. Web Workers
 
-**Localização**: `src/workers/fetchWorker.js`, `src/workers/kmeansWorker.js`
+**Localização**: `src/workers/radiusFetchWorker.js`, `src/workers/kmeansWorker.js`, `src/workers/fetchWorker.js`
 
 **Implementação**:
 
-**Fetch Worker** (`fetchWorker.js`):
-- Busca páginas **apenas de** `api/v1/cities` (paginação com limit/offset)
-- Padrão strided (worker i faz offsets i×pageSize, (i+W)×pageSize, …) para distribuir páginas entre workers
-- **Rate limiting**: fila por worker com atraso (REQUEST_DELAY_MS) e jitter para não saturar a API
-- Escrita atômica em SharedArrayBuffer; IDs (strings) enviados ao main via mensagens `city-ids`
+**Radius Fetch Worker** (`radiusFetchWorker.js`) — usado pelo botão "Carregar cidades (API) + Rodar K-means":
+- Cada worker recebe um subconjunto de IDs de cidades de referência (selecionadas pelo usuário)
+- Chama `GET /api/v1/cities/radius` para obter cidades dentro do raio (km) configurado
+- Rate limiting: delay + jitter entre requisições
+- Main thread faz merge, deduplicação, adiciona as cidades de referência e preenche SharedArrayBuffer; em seguida inicia K-means
+
+**Fetch Worker** (`fetchWorker.js`) — carregamento por páginas (disponível no código):
+- Busca páginas de `api/v1/cities` (limit/offset) em padrão strided por worker
+- Estado da fila de requisições encapsulado em closure (`createRateLimitedFetcher()`), sem variáveis mutáveis em nível de módulo
+- Escrita atômica em SharedArrayBuffer; IDs enviados ao main via mensagens `city-ids`
 
 **K-means Worker** (`kmeansWorker.js`):
 - **Implementação explícita** do K-means (sem biblioteca externa): distâncias e atualização de centroides no código
@@ -244,7 +244,7 @@ export function reducer(state = initialState, action) {
 
 **Características**:
 - Sem efeitos colaterais
-- Semmutação (sempre retorna novo estado)
+- Sem mutação (sempre retorna novo estado)
 - Função pura (mesma entrada = mesma saída)
 - Composable (pode combinar reducers)
 
@@ -278,6 +278,16 @@ export function selectSelectedCities(state) {
   return order.map(id => selected[id]).filter(Boolean);  // Pipeline funcional
 }
 ```
+
+#### Paradigma funcional: estado encapsulado em closures
+
+O projeto evita estado global mutável em nível de módulo; o estado mutável necessário fica encapsulado em closures:
+
+- **Store** (`src/app/state.js`): `createStore(reducer, initial)` mantém `currentState`, `isDispatching` e `listeners` **dentro da closure** do store retornado. Nenhuma variável mutável é exportada em nível de módulo.
+- **Cliente API** (`src/api/geodbClient.js`): O cliente padrão é obtido via `getDefaultClient()`, implementado com uma IIFE que guarda `clientPromise` em closure. Ordenação de resultados feita de forma **imutável** (`[...normalized].sort(...)`).
+- **Fetch Worker** (`src/workers/fetchWorker.js`): A fila de requisições e o contador de requisições ativas ficam dentro de `createRateLimitedFetcher()`; o módulo exporta apenas a função de fetch resultante.
+
+Assim, o código segue o paradigma funcional: reducers e seletores permanecem puros; efeitos e estado mutável ficam contidos em poucos pontos e não vazam como globais.
 
 ### 6. Fluxo de Clustering com Endpoint /radius
 
@@ -636,33 +646,36 @@ graph TD
     style O fill:#f3e5f5
 ```
 
-### Fluxo Completo: api/v1/cities → memória compartilhada → K-means
+### Fluxo Completo: Cidades selecionadas + raio → /radius → memória compartilhada → K-means
 
-O botão "Carregar cidades (API) + Rodar K-means" usa **apenas** o endpoint `api/v1/cities` (paginação). Não é necessário selecionar cidades.
+O botão "Carregar cidades (API) + Rodar K-means" exige **pelo menos uma cidade selecionada** e um **raio (km)**. O dataset é montado via endpoint `/api/v1/cities/radius` e depois processado por K-means.
 
-1. **Bulk load**: Main cria SharedArrayBuffer (capacidade fixa) e um pool de fetch workers. Cada worker recebe um subconjunto **strided** de páginas (worker i: offsets i×pageSize, (i+W)×pageSize, …). Workers fazem GET `api/v1/cities?limit=&offset=` em paralelo, com **rate limiting por worker** (fila + atraso + jitter) para não saturar a API. Cada worker aloca slot com `Atomics.add(writeIndex)`, escreve lat/long/pop no SAB e envia `{ slot, id }` ao main; o main preenche `idsLocal[slot]`.
-2. **Após todos os workers**: Main lê `getAllCities(buffers)`, valida k e inicia K-means no dataset em memória.
-3. **K-means**: Implementação **explícita** (sem biblioteca externa) em `kmeansParallel.js` e `kmeansWorker.js`: workers calculam distâncias (lat/long/pop) e somas parciais; main faz Reduce (novos centroides) e verifica convergência.
+1. **Validação**: Main verifica se há cidades selecionadas, raio > 0 e k ≥ 2.
+2. **Bulk load**: Main cria um pool de **Radius Fetch Workers**. Cada worker recebe um subconjunto dos IDs das cidades de referência e chama `GET /api/v1/cities/radius` (city_ids, radius_km) em paralelo, com rate limiting (delay + jitter). Main coleta resultados parciais, faz merge e deduplicação, adiciona as cidades de referência ao dataset, cria SharedArrayBuffer e preenche com `writeCity` / `idsLocal`.
+3. **Após o carregamento**: Main lê `getAllCities(buffers)`, valida k e inicia K-means no dataset em memória.
+4. **K-means**: Implementação **explícita** em `kmeansParallel.js` e `kmeansWorker.js`: workers calculam distâncias (lat/long/pop) e somas parciais; main faz Reduce (novos centroides) e verifica convergência.
 
 ```mermaid
 graph TD
-    A[Clique: Carregar cidades API + K-means] --> B[Criar SharedArrayBuffer<br/>createSharedCityBuffers]
-    B --> C[Pool de Fetch Workers<br/>api/v1/cities apenas]
-    C --> D[Workers: páginas strided<br/>rate limit por worker]
-    D --> E[Escrita atômica no SAB<br/>city-ids → main preenche idsLocal]
-    E --> F[getAllCities buffers]
-    F --> G[Validar k]
-    G -->|OK| H[K-means paralelo<br/>workers: distâncias + somas]
-    H --> I[Main: Reduce + centroides]
-    I --> J{Convergiu?}
-    J -->|Não| H
-    J -->|Sim| K[Clusters no estado]
+    A[Clique: Carregar cidades API + K-means] --> B{Validações}
+    B -->|Sem cidades / raio inválido| B1[Erro]
+    B -->|OK| C[Pool de Radius Fetch Workers]
+    C --> D[Workers: GET /radius por chunk de IDs]
+    D --> E[Main: merge + dedupe + refs]
+    E --> F[Criar SAB e writeCity / idsLocal]
+    F --> G[getAllCities buffers]
+    G --> H[Validar k]
+    H -->|OK| I[K-means paralelo]
+    I --> J[Main: Reduce + centroides]
+    J --> K{Convergiu?}
+    K -->|Não| I
+    K -->|Sim| L[Clusters no estado]
     
     style A fill:#e1f5ff
     style C fill:#fff4e1
-    style E fill:#e8f5e9
-    style H fill:#f3e5f5
-    style K fill:#c8e6c9
+    style F fill:#e8f5e9
+    style I fill:#f3e5f5
+    style L fill:#c8e6c9
 ```
 
 ### Arquitetura de Memória Compartilhada
@@ -713,24 +726,24 @@ graph LR
 
 **Resultado esperado**: Seleção funciona, estado preservado entre páginas.
 
-### 3. Rodar K-means (carregamento em massa da API)
+### 3. Rodar K-means (cidades no raio + clustering)
 
-1. Configure k no campo "k (número de clusters)" (padrão: 5, mínimo: 2). Não é necessário selecionar cidades.
-2. Clique em "Carregar cidades (API) + Rodar K-means"
-3. Observe:
+1. **Selecione ao menos uma cidade** nos resultados da API (botão "Adicionar") e defina o **Raio (km)** (ex.: 500).
+2. Configure **k** (número de clusters), por exemplo 5 (mínimo: 2).
+3. Clique em "Carregar cidades (API) + Rodar K-means"
+4. Observe:
    - Status muda para "loading"
-   - Logs mostram carregamento em massa de `api/v1/cities` com N workers
-   - Progresso de cidades carregadas em memória compartilhada
+   - Logs mostram carregamento via workers chamando `/api/v1/cities/radius`
+   - Progresso de cidades carregadas; main faz merge, dedupe e adiciona as referências
    - Status muda para "clustering"
    - Logs mostram iterações do K-means (mudança média por iteração)
    - Botão "Cancelar" aparece durante processamento
-4. Aguarde convergência (~10-30 iterações)
-5. Verifique mensagem de convergência
+5. Aguarde convergência (~10-30 iterações)
+6. Verifique mensagem de convergência
 
 **Resultado esperado**:
-- Cidades são obtidas apenas de `api/v1/cities` (paginação), em paralelo por workers
-- Dataset é preenchido em SharedArrayBuffer; em seguida K-means roda sobre esse dataset
-- K-means converge e clusters são exibidos com centroides e amostra de cidades (lat/long/pop)
+- Dataset = cidades dentro do raio das selecionadas + cidades de referência; preenchido em SharedArrayBuffer
+- K-means roda sobre esse dataset; clusters exibidos com centroides e amostra de cidades (lat/long/pop)
 
 ### 5. Verificar Clusters
 
@@ -759,47 +772,58 @@ graph LR
 ```
 geodb-kmeans/
 ├── src/
-│   ├── app/              # Lógica da aplicação
-│   │   ├── state.js      # Store funcional
-│   │   ├── reducer.js    # Reducers puros
-│   │   ├── actions.js    # Action creators
-│   │   ├── selectors.js  # Selectors funcionais
-│   │   ├── render.js     # Renderização declarativa
-│   │   ├── events.js      # Event handlers
-│   │   └── bootstrap.js  # Inicialização
-│   ├── api/              # Integração com API
-│   │   ├── geodbClient.js
-│   │   ├── rateLimit.js
-│   │   └── paging.js
-│   ├── workers/          # Web Workers
-│   │   ├── fetchWorker.js
-│   │   ├── kmeansWorker.js
-│   │   ├── workerPool.js
-│   │   └── sharedMemory.js
-│   ├── kmeans/           # Algoritmo K-means
-│   │   ├── distance.js
-│   │   ├── init.js
-│   │   ├── kmeans.js
-│   │   └── math.js
-│   └── ui/               # Interface
-│       ├── dom.js
-│       ├── templates.js
-│       └── styles.css
+│   ├── app/                  # Lógica da aplicação
+│   │   ├── state.js          # Store funcional (estado em closure)
+│   │   ├── reducer.js        # Reducers puros
+│   │   ├── actions.js        # Action creators
+│   │   ├── selectors.js      # Selectors funcionais
+│   │   ├── render.js         # Renderização declarativa
+│   │   ├── events.js         # Event handlers
+│   │   ├── bootstrap.js      # Inicialização
+│   │   └── initialState.js   # Estado inicial
+│   ├── api/                  # Integração com API
+│   │   ├── geodbClient.js    # Cliente FastAPI (getDefaultClient em closure)
+│   │   ├── rateLimit.js      # Token bucket
+│   │   └── paging.js         # Paginação
+│   ├── workers/              # Web Workers
+│   │   ├── fetchWorker.js    # Paginação strided (createRateLimitedFetcher)
+│   │   ├── radiusFetchWorker.js  # /radius (usado pelo botão K-means)
+│   │   ├── kmeansWorker.js   # Map phase do K-means
+│   │   ├── workerPool.js     # Pool de workers
+│   │   ├── sharedMemory.js   # SharedArrayBuffer / Atomics
+│   │   └── sharedPoints.js   # Utilitários de pontos compartilhados
+│   ├── kmeans/               # Algoritmo K-means
+│   │   ├── distance.js       # Distância euclidiana (lat/lon/pop)
+│   │   ├── init.js           # Inicialização de centroides
+│   │   ├── kmeans.js         # K-means single-thread
+│   │   ├── kmeansParallel.js # K-means com workers
+│   │   ├── kmeansSingle.js   # Fallback single-thread
+│   │   ├── math.js           # mean, variance, stdDev
+│   │   ├── normalize.js      # Normalização min-max
+│   │   └── schema.js         # Schemas de dados
+│   └── ui/                   # Interface
+│       ├── dom.js            # qs, on, setHTML
+│       ├── templates.js      # Templates HTML
+│       ├── clusterPlot.js     # Gráfico de clusters
+│       └── styles.css        # Estilos
 ├── index.html
 ├── package.json
+├── vite.config.js
+├── .envexample               # Exemplo de .env (VITE_API_BASE_URL)
 └── README.md
 ```
 
 ## 🔑 Conceitos Implementados
 
-- ✅ **Store Funcional**: Mini-Redux sem dependências
-- ✅ **Web Workers**: Processamento paralelo
-- ✅ **SharedArrayBuffer**: Memória compartilhada
-- ✅ **Rate Limiting**: Controle de requisições
-- ✅ **Race Condition Prevention**: Request IDs
-- ✅ **Renderização Declarativa**: UI reativa
-- ✅ **Programação Funcional**: Reducers, funções puras
-- ✅ **Map/Reduce**: K-means paralelizado
+- ✅ **Store Funcional**: Mini-Redux sem dependências; estado em closure (sem variáveis globais mutáveis)
+- ✅ **Paradigma Funcional**: Estado encapsulado em closures (store, cliente API, fetcher no worker); ordenação imutável
+- ✅ **Web Workers**: Processamento paralelo (radius fetch, K-means)
+- ✅ **SharedArrayBuffer**: Memória compartilhada com Atomics
+- ✅ **Rate Limiting**: Controle de requisições (token bucket, fila por worker)
+- ✅ **Race Condition Prevention**: Request IDs na paginação
+- ✅ **Renderização Declarativa**: UI reativa a partir do estado
+- ✅ **Programação Funcional**: Reducers e seletores puros; composição de funções
+- ✅ **Map/Reduce**: K-means paralelizado em workers
 - ✅ **Endpoint /radius**: Busca cidades por raio geográfico
 - ✅ **Dataset Merge**: União de cidades do raio + referências selecionadas
 
@@ -811,18 +835,18 @@ geodb-kmeans/
 
 ## ⚠️ Notas Importantes
 
-1. **SharedArrayBuffer**: Requer HTTPS ou localhost
-2. **API Rate Limits**: Implementado rate limiting automático
-3. **Performance**: Carregamento de 10k pode levar 2-5 minutos
-4. **Workers**: Número determinado automaticamente pelo hardware
+1. **Backend**: O frontend espera um backend em `VITE_API_BASE_URL` (ex.: FastAPI com `GET /api/v1/cities` e `GET /api/v1/cities/radius`).
+2. **SharedArrayBuffer**: Requer HTTPS ou localhost e headers COOP/COEP (já configurados no Vite para desenvolvimento).
+3. **Rate Limits**: Rate limiting automático nos workers para não saturar a API.
+4. **Workers**: Número de workers definido com base em `navigator.hardwareConcurrency` (mín. 2, máx. 8).
 
 ## 🐛 Troubleshooting
 
-**SharedArrayBuffer não disponível**: Execute em HTTPS ou localhost
+**SharedArrayBuffer não disponível**: Execute em HTTPS ou localhost e confira os headers COOP/COEP no servidor.
 
-**Erro de API**: Verifique `VITE_RAPIDAPI_KEY` no `.env`
+**Erro de API / rede**: Confirme que o backend está rodando e que `VITE_API_BASE_URL` no `.env` está correto (ex.: `http://localhost:8000`).
 
-**Workers não funcionam**: Use navegador moderno (Chrome, Firefox, Edge)
+**Workers não funcionam**: Use navegador moderno (Chrome, Firefox, Edge) com suporte a Web Workers e SharedArrayBuffer.
 
 ## 📄 Licença
 

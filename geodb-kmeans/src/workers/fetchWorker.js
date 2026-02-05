@@ -45,96 +45,78 @@ function writeCity(sharedBuffers, city, localIndex) {
   return slot;
 }
 
-// Rate limiting: per-worker throttling to avoid saturating api/v1/cities
+// Rate limiting constants (immutable)
 const MAX_CONCURRENT_REQUESTS = 2;
 const REQUEST_DELAY_MS = 500;
-const JITTER_MS = 200; // Jitter to avoid thundering herd
-
-let requestQueue = [];
-let activeRequests = 0;
+const JITTER_MS = 200;
 
 /**
- * Add jitter to delay
+ * Pure: add jitter to delay (no side effects, deterministic only in tests if seed needed)
  */
 function jitteredDelay(baseDelay) {
-  const jitter = Math.random() * JITTER_MS;
-  return baseDelay + jitter;
+  return baseDelay + Math.random() * JITTER_MS;
 }
 
 /**
- * Process request queue
+ * Creates a rate-limited fetcher with queue state encapsulated in closure (no module-level mutable state).
  */
-async function processQueue() {
-  if (activeRequests >= MAX_CONCURRENT_REQUESTS || requestQueue.length === 0) {
-    return;
+function createRateLimitedFetcher() {
+  const requestQueue = [];
+  let activeRequests = 0;
+
+  function processQueue() {
+    if (activeRequests >= MAX_CONCURRENT_REQUESTS || requestQueue.length === 0) {
+      return;
+    }
+    const request = requestQueue.shift();
+    activeRequests += 1;
+    Promise.resolve(request())
+      .finally(() => {
+        activeRequests -= 1;
+        setTimeout(processQueue, jitteredDelay(REQUEST_DELAY_MS));
+      });
   }
 
-  const request = requestQueue.shift();
-  activeRequests++;
+  return function fetchCitiesPage({ apiBaseUrl, sort, offset, limit }) {
+    return new Promise((resolve, reject) => {
+      requestQueue.push(async () => {
+        try {
+          const params = new URLSearchParams({
+            limit: limit.toString(),
+            offset: offset.toString()
+          });
+          const baseUrl = apiBaseUrl || 'http://localhost:8000';
+          const url = `${baseUrl}/api/v1/cities?${params.toString()}`;
 
-  try {
-    await request();
-  } finally {
-    activeRequests--;
-    // Process next request after delay
-    setTimeout(() => processQueue(), jitteredDelay(REQUEST_DELAY_MS));
-  }
-}
+          const response = await fetch(url, {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' }
+          });
 
-/**
- * Fetch cities from FastAPI with rate limiting
- */
-async function fetchCitiesPage({ apiBaseUrl, sort, offset, limit }) {
-  return new Promise((resolve, reject) => {
-    requestQueue.push(async () => {
-      try {
-        const params = new URLSearchParams({
-          limit: limit.toString(),
-          offset: offset.toString()
-        });
-
-        // FastAPI endpoint: /api/v1/cities
-        const baseUrl = apiBaseUrl || 'http://localhost:8000';
-        const url = `${baseUrl}/api/v1/cities?${params.toString()}`;
-
-        const response = await fetch(url, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json'
+          if (!response.ok) {
+            const errorText = await response.text();
+            let errorMessage = `API error: ${response.status} ${response.statusText}`;
+            try {
+              const errorData = JSON.parse(errorText);
+              errorMessage = errorData.detail || errorData.message || errorData.error || errorMessage;
+            } catch (_e) {
+              // keep default
+            }
+            throw new Error(errorMessage);
           }
-        });
 
-        if (!response.ok) {
-          const errorText = await response.text();
-          let errorMessage = `API error: ${response.status} ${response.statusText}`;
-          
-          try {
-            const errorData = JSON.parse(errorText);
-            errorMessage = errorData.detail || errorData.message || errorData.error || errorMessage;
-          } catch (e) {
-            // Use default error message
-          }
-          
-          throw new Error(errorMessage);
+          const cities = await response.json();
+          resolve({ data: cities || [] });
+        } catch (error) {
+          reject(error);
         }
-
-        // FastAPI returns a direct array, not wrapped in {data, metadata}
-        const cities = await response.json();
-        
-        // Wrap in expected format for compatibility
-        const result = {
-          data: cities || []
-        };
-        
-        resolve(result);
-      } catch (error) {
-        reject(error);
-      }
+      });
+      processQueue();
     });
-
-    processQueue();
-  });
+  };
 }
+
+const fetchCitiesPage = createRateLimitedFetcher();
 
 /**
  * Normalize city data from FastAPI format

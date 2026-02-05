@@ -1,14 +1,14 @@
 import { reducer } from './reducer.js';
 import { initialState } from './initialState.js';
 
-let currentState = initialState;
-let listeners = [];
-let isDispatching = false;
-
+/**
+ * Creates a store with all mutable state encapsulated in closure.
+ * No module-level mutable state; reducer remains pure (state, action) => newState.
+ */
 export function createStore(reducerFn, initial) {
-  currentState = initial;
-  listeners = [];
-  isDispatching = false;
+  let currentState = initial;
+  let isDispatching = false;
+  const listeners = [];
 
   return {
     getState() {
@@ -19,36 +19,22 @@ export function createStore(reducerFn, initial) {
       if (isDispatching) {
         throw new Error('Reducers may not dispatch actions.');
       }
-
       try {
         isDispatching = true;
         currentState = reducerFn(currentState, action);
+        return action;
       } finally {
         isDispatching = false;
+        listeners.forEach(listener => listener());
       }
-
-      // Notify all listeners
-      listeners.forEach(listener => {
-        listener();
-      });
-
-      return action;
     },
 
     subscribe(listener) {
       if (typeof listener !== 'function') {
         throw new Error('Expected listener to be a function.');
       }
-
-      let isSubscribed = true;
       listeners.push(listener);
-
       return function unsubscribe() {
-        if (!isSubscribed) {
-          return;
-        }
-
-        isSubscribed = false;
         const index = listeners.indexOf(listener);
         if (index > -1) {
           listeners.splice(index, 1);
@@ -58,10 +44,10 @@ export function createStore(reducerFn, initial) {
   };
 }
 
-// Create and export the store instance
-export const store = createStore(reducer, initialState);
+const store = createStore(reducer, initialState);
 
-// Convenience functions
+export { store };
+
 export function getState() {
   return store.getState();
 }
