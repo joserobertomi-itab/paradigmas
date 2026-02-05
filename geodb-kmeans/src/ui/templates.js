@@ -184,7 +184,7 @@ export function clusterList(clusters, filterId = null) {
   return container.outerHTML;
 }
 
-// Metrics panel template
+// Metrics panel template (inner content only; container has class="metrics-panel" in render)
 export function metricsPanel(metrics) {
   if (!metrics) return '';
 
@@ -194,29 +194,27 @@ export function metricsPanel(metrics) {
   };
 
   return `
-    <div class="metrics-panel">
-      <h3>Métricas</h3>
-      <div class="metrics-grid">
-        <div class="metric-item">
-          <span class="metric-label">Tempo de carregamento:</span>
-          <span class="metric-value">${formatTime(metrics.loadTimeMs || 0)}</span>
-        </div>
-        <div class="metric-item">
-          <span class="metric-label">Tempo K-means:</span>
-          <span class="metric-value">${formatTime(metrics.kmeansTimeMs || 0)}</span>
-        </div>
-        <div class="metric-item">
-          <span class="metric-label">Tempo total:</span>
-          <span class="metric-value">${formatTime(metrics.totalTimeMs || 0)}</span>
-        </div>
-        <div class="metric-item">
-          <span class="metric-label">Iterações:</span>
-          <span class="metric-value">${metrics.iterations || 0}</span>
-        </div>
-        <div class="metric-item">
-          <span class="metric-label">Workers usados:</span>
-          <span class="metric-value">${metrics.workersUsed || 0}</span>
-        </div>
+    <h3>Métricas</h3>
+    <div class="metrics-grid">
+      <div class="metric-item">
+        <span class="metric-label">Tempo de carregamento:</span>
+        <span class="metric-value">${formatTime(metrics.loadTimeMs || 0)}</span>
+      </div>
+      <div class="metric-item">
+        <span class="metric-label">Tempo K-means:</span>
+        <span class="metric-value">${formatTime(metrics.kmeansTimeMs || 0)}</span>
+      </div>
+      <div class="metric-item">
+        <span class="metric-label">Tempo total:</span>
+        <span class="metric-value">${formatTime(metrics.totalTimeMs || 0)}</span>
+      </div>
+      <div class="metric-item">
+        <span class="metric-label">Iterações:</span>
+        <span class="metric-value">${metrics.iterations || 0}</span>
+      </div>
+      <div class="metric-item">
+        <span class="metric-label">Workers usados:</span>
+        <span class="metric-value">${metrics.workersUsed || 0}</span>
       </div>
     </div>
   `;

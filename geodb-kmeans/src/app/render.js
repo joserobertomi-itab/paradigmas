@@ -218,14 +218,17 @@ export function render(root, state) {
     // Render metrics panel
     const metrics = selectKmeansMetrics(state);
     const iterations = selectKmeansIterations(state);
+    let metricsEl = qs('#metrics-panel', clustersContainer);
     if (metrics) {
-      let metricsEl = qs('#metrics-panel', clustersContainer);
       if (!metricsEl) {
         metricsEl = document.createElement('div');
         metricsEl.id = 'metrics-panel';
+        metricsEl.className = 'metrics-panel';
         clustersContainer.insertBefore(metricsEl, clustersListEl);
       }
       setHTML(metricsEl, metricsPanel({ ...metrics, iterations }));
+    } else if (metricsEl) {
+      setHTML(metricsEl, '');
     }
   } else {
     // Remove clusters container if no clusters

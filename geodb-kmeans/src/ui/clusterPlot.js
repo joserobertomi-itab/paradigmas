@@ -86,21 +86,77 @@ function computeBounds(clusters) {
  * Map (lat, lon) to canvas (x, y). North is up.
  * Uses a single scale for both axes so the map aspect ratio is independent of
  * canvas shape and point distribution (no stretch).
+ * insets: { left, right, top, bottom } in pixels
  */
-function toCanvas(lat, lon, bounds, width, height, padding) {
+function toCanvas(lat, lon, bounds, width, height, insets) {
   const { minLat, maxLat, minLon, maxLon } = bounds;
   const rangeLon = maxLon - minLon || 1;
   const rangeLat = maxLat - minLat || 1;
-  const innerW = width - 2 * padding;
-  const innerH = height - 2 * padding;
+  const innerW = width - insets.left - insets.right;
+  const innerH = height - insets.top - insets.bottom;
   const scale = Math.min(innerW / rangeLon, innerH / rangeLat);
   const plotW = rangeLon * scale;
   const plotH = rangeLat * scale;
-  const offsetX = padding + (innerW - plotW) / 2;
-  const offsetY = padding + (innerH - plotH) / 2;
+  const offsetX = insets.left + (innerW - plotW) / 2;
+  const offsetY = insets.top + (innerH - plotH) / 2;
   const x = offsetX + ((lon - minLon) / rangeLon) * plotW;
   const y = offsetY + (1 - (lat - minLat) / rangeLat) * plotH;
   return { x, y };
+}
+
+const DEFAULT_INSETS = {
+  left: 42,
+  right: 12,
+  top: 12,
+  bottom: 52
+};
+
+/**
+ * Draw axis labels and legend on the chart.
+ */
+function drawLabels(ctx, cssWidth, cssHeight, insets, clusters) {
+  const innerW = cssWidth - insets.left - insets.right;
+  const innerH = cssHeight - insets.top - insets.bottom;
+  const plotCenterX = insets.left + innerW / 2;
+  const plotBottom = cssHeight - insets.bottom;
+
+  ctx.fillStyle = '#333';
+  ctx.font = '12px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  // Y-axis label: "Latitude" (rotated)
+  ctx.save();
+  ctx.translate(insets.left / 2, insets.top + innerH / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillText('Latitude', 0, 0);
+  ctx.restore();
+
+  // X-axis label: "Longitude"
+  ctx.textBaseline = 'top';
+  ctx.fillText('Longitude', plotCenterX, plotBottom - 38);
+
+  // Legend: Cluster 0, Cluster 1, ...
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+  const legendY = plotBottom - 18;
+  const legendBoxSize = 10;
+  const legendGap = 14;
+  let legendX = insets.left;
+
+  for (let i = 0; i < clusters.length; i++) {
+    const clusterIndex = clusters[i].index !== undefined ? clusters[i].index : i;
+    const color = getClusterColor(clusterIndex);
+    ctx.fillStyle = color;
+    ctx.fillRect(legendX, legendY - legendBoxSize / 2, legendBoxSize, legendBoxSize);
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(legendX, legendY - legendBoxSize / 2, legendBoxSize, legendBoxSize);
+    ctx.fillStyle = '#333';
+    ctx.font = '11px sans-serif';
+    ctx.fillText(`Cluster ${clusterIndex}`, legendX + legendBoxSize + 4, legendY);
+    legendX += legendBoxSize + 4 + ctx.measureText(`Cluster ${clusterIndex}`).width + legendGap;
+  }
 }
 
 /**
@@ -108,14 +164,18 @@ function toCanvas(lat, lon, bounds, width, height, padding) {
  * @param {HTMLCanvasElement} canvas
  * @param {Array<{ index?: number, centroid?: { latitude?: number, longitude?: number }, cities?: Array<{ latitude?: number, longitude?: number }>, sampleCities?: Array<{ latitude?: number, longitude?: number }> }>} clusters
  * @param {Object} options
- * @param {number} [options.padding=20] - pixel padding around plot
+ * @param {number} [options.padding=20] - pixel padding (used when no insets)
+ * @param {Object} [options.insets] - { left, right, top, bottom } for plot area; used when labels enabled
+ * @param {boolean} [options.showLabels=true] - draw axis labels and legend
  * @param {number} [options.pointRadius=2] - radius for city points
  * @param {number} [options.centroidRadius=6] - radius for centroid marker
  */
 export function drawClusterPlot(canvas, clusters, options = {}) {
   if (!canvas || !clusters || clusters.length === 0) return;
 
+  const showLabels = options.showLabels !== false;
   const padding = options.padding ?? 20;
+  const insets = options.insets ?? (showLabels ? DEFAULT_INSETS : { left: padding, right: padding, top: padding, bottom: padding });
   const pointRadius = options.pointRadius ?? 2;
   const centroidRadius = options.centroidRadius ?? 6;
 
@@ -150,7 +210,7 @@ export function drawClusterPlot(canvas, clusters, options = {}) {
       const lat = city.latitude ?? city.lat;
       const lon = city.longitude ?? city.lon;
       if (!isValidCoord(lat, lon)) continue;
-      const { x, y } = toCanvas(lat, lon, bounds, cssWidth, cssHeight, padding);
+      const { x, y } = toCanvas(lat, lon, bounds, cssWidth, cssHeight, insets);
       ctx.beginPath();
       ctx.arc(x, y, pointRadius, 0, Math.PI * 2);
       ctx.fill();
@@ -167,7 +227,7 @@ export function drawClusterPlot(canvas, clusters, options = {}) {
     if (!isValidCoord(lat, lon)) continue;
 
     const color = getClusterColor(clusterIndex);
-    const { x, y } = toCanvas(lat, lon, bounds, cssWidth, cssHeight, padding);
+    const { x, y } = toCanvas(lat, lon, bounds, cssWidth, cssHeight, insets);
 
     ctx.fillStyle = color;
     ctx.strokeStyle = '#333';
@@ -176,5 +236,9 @@ export function drawClusterPlot(canvas, clusters, options = {}) {
     ctx.arc(x, y, centroidRadius, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
+  }
+
+  if (showLabels) {
+    drawLabels(ctx, cssWidth, cssHeight, insets, clusters);
   }
 }
