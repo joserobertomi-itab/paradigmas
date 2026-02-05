@@ -234,8 +234,13 @@ self.onmessage = async function(e) {
           sharedBuffers.populations[slot] = normalized.population || 0;
           sharedBuffers.localIndices[slot] = slot; // Use slot as temporary index
           
-          // Store ID to send back to main thread
-          cityIds.push({ slot, id: normalized.id });
+          // Store ID, name, country to send back to main thread (for display in cities-sample)
+          cityIds.push({
+            slot,
+            id: normalized.id,
+            name: normalized.name || '',
+            country: normalized.country || ''
+          });
           written++;
         }
 

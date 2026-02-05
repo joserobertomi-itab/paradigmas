@@ -481,6 +481,7 @@ async function startBulkLoadAndKmeans(store, onPoolCreated = null) {
       onPoolCreated(fetchPool);
     }
 
+    const idToMeta = {}; // id -> { name, country } for display in cities-sample
     const runTask = (workerId) => {
       return fetchPool.runTask(
         {
@@ -495,8 +496,9 @@ async function startBulkLoadAndKmeans(store, onPoolCreated = null) {
         },
         (msg) => {
           if (msg.type === 'city-ids' && msg.payload?.cityData) {
-            for (const { slot, id } of msg.payload.cityData) {
+            for (const { slot, id, name, country } of msg.payload.cityData) {
               buffers.idsLocal[slot] = id;
+              idToMeta[id] = { name: name ?? '', country: country ?? '' };
             }
           }
           if (msg.type === 'progress' || msg.type === 'city-ids') {
@@ -611,13 +613,21 @@ async function startBulkLoadAndKmeans(store, onPoolCreated = null) {
       store.dispatch(actions.addLog(`Cluster ${i}: ${size} cidade(s)`));
     });
 
-    const formattedClusters = kmeansResult.clusters.map((cluster, index) => ({
-      index,
-      size: cluster.size || 0,
-      centroid: cluster.centroid || {},
-      cities: cluster.cities || [],
-      sampleCities: (cluster.cities || []).slice(0, 30)
-    }));
+    const enrichCity = (c) => ({
+      ...c,
+      name: idToMeta[c.id]?.name ?? 'Unknown',
+      country: idToMeta[c.id]?.country ?? 'Unknown'
+    });
+    const formattedClusters = kmeansResult.clusters.map((cluster, index) => {
+      const cities = (cluster.cities || []).map(enrichCity);
+      return {
+        index,
+        size: cluster.size || 0,
+        centroid: cluster.centroid || {},
+        cities,
+        sampleCities: cities.slice(0, 30)
+      };
+    });
 
     const assignmentsById = {};
     if (kmeansResult.assignments && finalDataset.length <= 10000) {
