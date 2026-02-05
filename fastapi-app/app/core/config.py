@@ -1,7 +1,13 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from typing import List, Union
 from functools import lru_cache
+
+# Origins to always allow in dev so OPTIONS preflight works (localhost vs 127.0.0.1, various ports)
+DEV_CORS_ORIGINS = [
+    "http://localhost:80", "http://localhost:3000", "http://localhost:5173", "http://localhost:8000", "http://localhost:8080",
+    "http://127.0.0.1:80", "http://127.0.0.1:3000", "http://127.0.0.1:5173", "http://127.0.0.1:8000", "http://127.0.0.1:8080",
+]
 
 
 class Settings(BaseSettings):
@@ -16,8 +22,11 @@ class Settings(BaseSettings):
     postgres_password: str = "password"
     postgres_port: int = 5432
     
-    # CORS
-    cors_origins: Union[List[str], str] = ["http://localhost:3000", "http://localhost:8000", "http://localhost:5173"]
+    # CORS (include both localhost and 127.0.0.1 so preflight OPTIONS succeeds from either)
+    cors_origins: Union[List[str], str] = [
+        "http://localhost:3000", "http://localhost:8000", "http://localhost:5173",
+        "http://127.0.0.1:3000", "http://127.0.0.1:8000", "http://127.0.0.1:5173",
+    ]
     
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -26,6 +35,18 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return [origin.strip() for origin in v.split(",") if origin.strip()]
         return v
+
+    @model_validator(mode="after")
+    def ensure_dev_cors_origins(self) -> "Settings":
+        """In dev, always add localhost/127.0.0.1 origins so OPTIONS preflight never gets 400."""
+        if self.app_env.lower() != "dev":
+            return self
+        origins = list(self.cors_origins)
+        for o in DEV_CORS_ORIGINS:
+            if o not in origins:
+                origins.append(o)
+        object.__setattr__(self, "cors_origins", origins)
+        return self
     
     # SQLAlchemy/SQLModel
     db_echo: bool = False

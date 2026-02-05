@@ -42,7 +42,10 @@ app.add_middleware(
 
 app.include_router(api_router)
 
-logger.info("Application started", extra={"environment": settings.app_env})
+logger.info(
+    "Application started",
+    extra={"environment": settings.app_env, "cors_origins": settings.cors_origins},
+)
 
 
 @app.get("/", tags=["health"])

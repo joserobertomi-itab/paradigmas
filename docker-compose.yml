@@ -71,14 +71,15 @@ services:
       - paradigmas-network
 
   # Frontend Web Application
+  # Browser runs on host: use http://localhost:8000 so fetch() can reach the API.
+  # (http://api:8000 only resolves inside Docker; use that only if you proxy API via nginx.)
   web:
     build:
       context: ./geodb-kmeans
       dockerfile: Dockerfile
       args:
         # Build-time arguments (Vite embeds these at build time)
-        # These can be set in root .env or geodb-kmeans/.env
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://api:8000}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
     env_file:
       # Try to load from root .env first, then geodb-kmeans/.env
       - .env
