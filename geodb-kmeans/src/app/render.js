@@ -251,12 +251,13 @@ export function render(root, state) {
     nextPageBtn.disabled = results.length < pageSize;
   }
 
-  // Update run K-means button state (enabled when not running and k >= 2)
+  // Update run K-means button state (enabled when not running, k >= 2, and at least one city selected)
   if (runBulkKmeansBtn) {
     const status = selectAsyncStatus(state);
     const isRunning = status === 'loading' || status === 'clustering';
     const k = selectK(state);
-    runBulkKmeansBtn.disabled = isRunning || k < 2;
+    const selectedCount = selectSelectedCount(state);
+    runBulkKmeansBtn.disabled = isRunning || k < 2 || selectedCount < 1;
   }
 
   const cancelBtn = qs('#cancel-btn', root);

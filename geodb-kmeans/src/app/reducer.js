@@ -119,10 +119,10 @@ export function reducer(state = initialState, action) {
         radius = parseFloat(radius);
       }
       if (typeof radius !== 'number' || isNaN(radius)) {
-        radius = 100; // Default value
+        radius = 500; // Default value
       }
-      // Clamp between 1 and 500
-      radius = Math.max(1, Math.min(500, radius));
+      // Clamp between 1 and 50000
+      radius = Math.max(1, Math.min(50000, radius));
       
       return {
         ...state,

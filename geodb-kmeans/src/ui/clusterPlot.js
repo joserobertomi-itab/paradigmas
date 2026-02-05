@@ -84,12 +84,8 @@ function computeBounds(clusters) {
 
 /**
  * Map (lat, lon) to canvas (x, y). North is up.
- * @param {number} lat
- * @param {number} lon
- * @param {Object} bounds
- * @param {number} width - canvas width
- * @param {number} height - canvas height
- * @param {number} padding - pixel padding
+ * Uses a single scale for both axes so the map aspect ratio is independent of
+ * canvas shape and point distribution (no stretch).
  */
 function toCanvas(lat, lon, bounds, width, height, padding) {
   const { minLat, maxLat, minLon, maxLon } = bounds;
@@ -97,8 +93,13 @@ function toCanvas(lat, lon, bounds, width, height, padding) {
   const rangeLat = maxLat - minLat || 1;
   const innerW = width - 2 * padding;
   const innerH = height - 2 * padding;
-  const x = padding + ((lon - minLon) / rangeLon) * innerW;
-  const y = padding + (1 - (lat - minLat) / rangeLat) * innerH;
+  const scale = Math.min(innerW / rangeLon, innerH / rangeLat);
+  const plotW = rangeLon * scale;
+  const plotH = rangeLat * scale;
+  const offsetX = padding + (innerW - plotW) / 2;
+  const offsetY = padding + (innerH - plotH) / 2;
+  const x = offsetX + ((lon - minLon) / rangeLon) * plotW;
+  const y = offsetY + (1 - (lat - minLat) / rangeLat) * plotH;
   return { x, y };
 }
 

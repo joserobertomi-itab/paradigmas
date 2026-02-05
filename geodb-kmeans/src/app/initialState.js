@@ -4,7 +4,7 @@ export const initialState = {
   sort: 'population:desc',
   page: 1,
   pageSize: 10, // Free plan limit (max 10 per request)
-  radius: 100,
+  radius: 500,
 
   // API results (current page)
   results: [],

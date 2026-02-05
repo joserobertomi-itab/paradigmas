@@ -1,11 +1,11 @@
 import { qs, on } from '../ui/dom.js';
 import * as actions from './actions.js';
-import { selectK, selectQuery, selectSort, selectPage, selectPageSize } from './selectors.js';
+import { selectK, selectSelectedCities, selectRadius, selectQuery, selectSort, selectPage, selectPageSize } from './selectors.js';
 import { findCities } from '../api/geodbClient.js';
 import { pageToOffset } from '../api/paging.js';
-import { createSharedCityBuffers, getAllCities } from '../workers/sharedMemory.js';
+import { createSharedCityBuffers, getAllCities, writeCity } from '../workers/sharedMemory.js';
 import { createWorkerPool } from '../workers/workerPool.js';
-import FetchWorker from '../workers/fetchWorker.js?worker&inline';
+import RadiusFetchWorker from '../workers/radiusFetchWorker.js?worker&inline';
 import { kmeans as runKmeans } from '../kmeans/kmeans.js';
 import { kmeansSingle } from '../kmeans/kmeansSingle.js';
 import { kmeansParallel } from '../kmeans/kmeansParallel.js';
@@ -408,18 +408,17 @@ export function bindEvents(root, store) {
   });
 }
 
-/** Bulk load capacity and page size for api/v1/cities */
-const BULK_CAPACITY = 50_000;
-const BULK_PAGE_SIZE = 1000;
+/** Max capacity for progress display during fetch (actual buffer size is set after merge) */
+const RADIUS_BULK_TARGET = 500_000;
 
 /**
- * Start bulk load and K-means clustering.
+ * Start radius-based load and K-means clustering.
  *
  * Flow:
- * 1. Create shared buffers and fetch worker pool.
- * 2. Assign strided page subsets to workers (api/v1/cities only).
- * 3. Workers write to shared memory; main thread fills idsLocal from city-ids.
- * 4. When all workers complete, build cities from shared memory and run K-means.
+ * 1. Require at least one selected city and valid radius.
+ * 2. Split reference city IDs across workers; each worker calls api/v1/cities/radius for its chunk.
+ * 3. Main thread collects partial results, merges, dedupes, adds reference cities, writes to shared memory.
+ * 4. Run K-means on the dataset in shared memory.
  *
  * @param {Object} store - Redux store
  * @param {Function} onPoolCreated - Callback when worker pool is created (for cancellation)
@@ -428,8 +427,23 @@ const BULK_PAGE_SIZE = 1000;
 async function startBulkLoadAndKmeans(store, onPoolCreated = null) {
   const state = store.getState();
   const k = selectK(state);
+  const selectedCities = selectSelectedCities(state);
+  const radiusKm = selectRadius(state);
 
-  // Validate k before starting
+  if (selectedCities.length < 1) {
+    store.dispatch(actions.setError('Selecione ao menos uma cidade de referência.'));
+    store.dispatch(actions.setStatus('error'));
+    store.dispatch(actions.addLog('Erro: nenhuma cidade de referência selecionada.'));
+    return null;
+  }
+
+  if (typeof radiusKm !== 'number' || radiusKm <= 0 || isNaN(radiusKm)) {
+    store.dispatch(actions.setError('Raio deve ser um número positivo (km).'));
+    store.dispatch(actions.setStatus('error'));
+    store.dispatch(actions.addLog(`Erro: raio inválido: ${radiusKm}`));
+    return null;
+  }
+
   if (k < 2) {
     store.dispatch(actions.setError(`k deve ser >= 2. Valor atual: ${k}.`));
     store.dispatch(actions.setStatus('error'));
@@ -445,30 +459,30 @@ async function startBulkLoadAndKmeans(store, onPoolCreated = null) {
 
   const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
   const hardwareConcurrency = navigator.hardwareConcurrency || 4;
-  const fetchWorkerCount = Math.max(2, Math.min(8, hardwareConcurrency));
+  const maxWorkers = Math.max(2, Math.min(8, hardwareConcurrency));
+
+  const referenceCityIds = selectedCities.map((c) => (typeof c.id === 'string' ? parseInt(c.id, 10) : c.id)).filter((id) => !isNaN(id));
+
+  if (referenceCityIds.length === 0) {
+    store.dispatch(actions.setError('IDs das cidades de referência inválidos.'));
+    store.dispatch(actions.setStatus('error'));
+    return null;
+  }
+
+  const fetchWorkerCount = Math.max(1, Math.min(maxWorkers, referenceCityIds.length));
 
   try {
     const startTime = performance.now();
     store.dispatch(actions.setStatus('loading'));
     store.dispatch(actions.clearLogs());
-    store.dispatch(actions.addLog(`Iniciando carregamento em massa de api/v1/cities (até ${BULK_CAPACITY} cidades) com ${fetchWorkerCount} workers...`));
+    store.dispatch(actions.addLog(`Carregando cidades dentro de ${radiusKm} km de ${referenceCityIds.length} cidade(s) de referência com ${fetchWorkerCount} workers...`));
     store.dispatch(actions.setProgress(0));
     store.dispatch(actions.setBulkLoaded(0));
-    store.dispatch(actions.setBulkTotalTarget(BULK_CAPACITY));
-
-    const buffers = createSharedCityBuffers(BULK_CAPACITY);
-    const sharedBuffers = {
-      writeIndex: buffers.writeIndex,
-      latitudes: buffers.latitudes,
-      longitudes: buffers.longitudes,
-      populations: buffers.populations,
-      localIndices: buffers.localIndices,
-      capacity: buffers.capacity
-    };
+    store.dispatch(actions.setBulkTotalTarget(RADIUS_BULK_TARGET));
 
     let fetchPool;
     try {
-      fetchPool = createWorkerPool({ size: fetchWorkerCount, WorkerConstructor: FetchWorker });
+      fetchPool = createWorkerPool({ size: fetchWorkerCount, WorkerConstructor: RadiusFetchWorker });
     } catch (poolErr) {
       const poolMsg = (poolErr && (poolErr.message ?? poolErr.error?.message)) || String(poolErr);
       store.dispatch(actions.setError(`Falha ao criar workers de carregamento: ${poolMsg}`));
@@ -481,31 +495,29 @@ async function startBulkLoadAndKmeans(store, onPoolCreated = null) {
       onPoolCreated(fetchPool);
     }
 
-    const idToMeta = {}; // id -> { name, country } for display in cities-sample
+    const partialCitiesByWorker = [];
+    for (let w = 0; w < fetchWorkerCount; w++) {
+      partialCitiesByWorker.push([]);
+    }
+
     const runTask = (workerId) => {
+      const chunk = [];
+      for (let i = workerId; i < referenceCityIds.length; i += fetchWorkerCount) {
+        chunk.push(referenceCityIds[i]);
+      }
       return fetchPool.runTask(
         {
           workerId,
-          totalWorkers: fetchWorkerCount,
-          pageSize: BULK_PAGE_SIZE,
-          startOffset: workerId * BULK_PAGE_SIZE,
-          endOffset: BULK_CAPACITY * 2,
-          apiBaseUrl,
-          sort: '',
-          sharedBuffers
+          referenceCityIds: chunk,
+          radiusKm,
+          apiBaseUrl
         },
         (msg) => {
-          if (msg.type === 'city-ids' && msg.payload?.cityData) {
-            for (const { slot, id, name, country } of msg.payload.cityData) {
-              buffers.idsLocal[slot] = id;
-              idToMeta[id] = { name: name ?? '', country: country ?? '' };
-            }
-          }
-          if (msg.type === 'progress' || msg.type === 'city-ids') {
-            const count = Atomics.load(buffers.writeIndex, 0);
-            store.dispatch(actions.setBulkLoaded(count));
-            const pct = Math.min(100, Math.round((count / BULK_CAPACITY) * 100));
-            store.dispatch(actions.setProgress(pct));
+          if (msg.type === 'radius-result' && msg.payload?.cities) {
+            partialCitiesByWorker[msg.payload.workerId] = msg.payload.cities;
+            const totalSoFar = partialCitiesByWorker.reduce((sum, arr) => sum + arr.length, 0);
+            store.dispatch(actions.setBulkLoaded(totalSoFar));
+            store.dispatch(actions.addLog(`Worker ${msg.payload.workerId}: ${msg.payload.cities.length} cidades dentro do raio.`));
           }
         }
       );
@@ -526,13 +538,47 @@ async function startBulkLoadAndKmeans(store, onPoolCreated = null) {
       return null;
     }
 
-    const count = Atomics.load(buffers.writeIndex, 0);
+    const allPartial = partialCitiesByWorker.flat();
+    const cityMap = new Map();
+    for (const city of allPartial) {
+      if (city && city.id != null) {
+        cityMap.set(String(city.id), city);
+      }
+    }
+    for (const ref of selectedCities) {
+      const id = String(ref.id);
+      if (!cityMap.has(id)) {
+        cityMap.set(id, {
+          id,
+          latitude: ref.latitude ?? ref.lat ?? 0,
+          longitude: ref.longitude ?? ref.lng ?? 0,
+          population: ref.population ?? 0,
+          name: ref.name ?? '',
+          country: ref.country ?? ''
+        });
+      }
+    }
+
+    const mergedList = Array.from(cityMap.values());
+
+    const buffers = createSharedCityBuffers(mergedList.length);
+
+    buffers.writeIndex[0] = 0;
+    const idToMeta = {};
+    for (let i = 0; i < mergedList.length; i++) {
+      const city = mergedList[i];
+      writeCity(buffers, city, i);
+      buffers.idsLocal[i] = String(city.id);
+      idToMeta[String(city.id)] = { name: city.name ?? '', country: city.country ?? '' };
+    }
+
+    const count = mergedList.length;
     store.dispatch(actions.setBulkLoaded(count));
     store.dispatch(actions.setProgress(100));
-    store.dispatch(actions.addLog(`Carregadas ${count} cidade(s) em memória compartilhada.`));
+    store.dispatch(actions.addLog(`Dataset: ${count} cidade(s) (referências + raio).`));
 
     if (count < 2) {
-      store.dispatch(actions.setError('Poucas cidades carregadas para K-means (mínimo 2).'));
+      store.dispatch(actions.setError('Poucas cidades para K-means (mínimo 2). Selecione mais cidades ou aumente o raio.'));
       store.dispatch(actions.setStatus('error'));
       return null;
     }
@@ -649,7 +695,7 @@ async function startBulkLoadAndKmeans(store, onPoolCreated = null) {
       workersUsed,
       k,
       datasetSize: finalDataset.length,
-      radiusKm: null,
+      radiusKm,
       assignmentsById: Object.keys(assignmentsById).length > 0 ? assignmentsById : null
     }));
     store.dispatch(actions.setProgress(100));

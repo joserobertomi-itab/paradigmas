@@ -45,8 +45,8 @@ export function createWorkerPool({ size, workerUrl, WorkerConstructor }) {
         }
         activeTasks--;
         processQueue();
-      } else if (type === 'progress' || type === 'city-ids') {
-        // Forward progress events and city IDs
+      } else if (type === 'progress' || type === 'city-ids' || type === 'radius-result') {
+        // Forward progress events, city IDs, and radius results
         const resolver = taskResolvers.get(taskId);
         if (resolver && resolver.onProgress) {
           resolver.onProgress({ type, payload });
