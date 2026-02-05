@@ -6,8 +6,7 @@ import {
   statusBadge,
   progressBar,
   logsTextarea,
-  clusterList,
-  metricsPanel
+  clusterList
 } from '../ui/templates.js';
 import {
   selectResults,
@@ -22,8 +21,6 @@ import {
   selectAsyncLogs,
   selectK,
   selectKmeansClusters,
-  selectKmeansMetrics,
-  selectKmeansIterations,
   selectClusterFilter,
   selectSort,
   selectRadius
@@ -213,22 +210,6 @@ export function render(root, state) {
     const plotCanvas = qs('#clusters-plot', clustersContainer);
     if (plotCanvas) {
       drawClusterPlot(plotCanvas, clusters, { padding: 20 });
-    }
-
-    // Render metrics panel
-    const metrics = selectKmeansMetrics(state);
-    const iterations = selectKmeansIterations(state);
-    let metricsEl = qs('#metrics-panel', clustersContainer);
-    if (metrics) {
-      if (!metricsEl) {
-        metricsEl = document.createElement('div');
-        metricsEl.id = 'metrics-panel';
-        metricsEl.className = 'metrics-panel';
-        clustersContainer.insertBefore(metricsEl, clustersListEl);
-      }
-      setHTML(metricsEl, metricsPanel({ ...metrics, iterations }));
-    } else if (metricsEl) {
-      setHTML(metricsEl, '');
     }
   } else {
     // Remove clusters container if no clusters
