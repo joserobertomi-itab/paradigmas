@@ -22,6 +22,40 @@ function getClusterColor(index) {
   return CLUSTER_COLORS[index % CLUSTER_COLORS.length];
 }
 
+/**
+ * Fisher–Yates shuffle (mutates array)
+ */
+function shuffleArray(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+/**
+ * Take a random sample of cities for drawing when total exceeds maxPoints.
+ * Returns array of { clusterIndex, color, city } for drawing.
+ */
+function samplePointsForDrawing(clusters, maxPoints) {
+  const all = [];
+  for (let i = 0; i < clusters.length; i++) {
+    const cluster = clusters[i];
+    const clusterIndex = cluster.index !== undefined ? cluster.index : i;
+    const color = getClusterColor(clusterIndex);
+    const cities = cluster.cities || cluster.sampleCities || [];
+    for (const city of cities) {
+      const lat = city.latitude ?? city.lat;
+      const lon = city.longitude ?? city.lon;
+      if (isValidCoord(lat, lon)) {
+        all.push({ clusterIndex, color, city });
+      }
+    }
+  }
+  if (all.length <= maxPoints) return all;
+  return shuffleArray([...all]).slice(0, maxPoints);
+}
+
 function isValidCoord(lat, lon) {
   return (
     typeof lat === 'number' &&
@@ -165,6 +199,7 @@ function drawLabels(ctx, cssWidth, cssHeight, insets, clusters) {
  * @param {boolean} [options.showLabels=true] - draw axis labels and legend
  * @param {number} [options.pointRadius=2] - radius for city points
  * @param {number} [options.centroidRadius=6] - radius for centroid marker
+ * @param {number} [options.maxPointsToDraw=2000] - max random city points to draw (avoids overcrowding; use random sample when dataset is larger)
  */
 export function drawClusterPlot(canvas, clusters, options = {}) {
   if (!canvas || !clusters || clusters.length === 0) return;
@@ -174,6 +209,7 @@ export function drawClusterPlot(canvas, clusters, options = {}) {
   const insets = options.insets ?? (showLabels ? DEFAULT_INSETS : { left: padding, right: padding, top: padding, bottom: padding });
   const pointRadius = options.pointRadius ?? 2;
   const centroidRadius = options.centroidRadius ?? 6;
+  const maxPointsToDraw = options.maxPointsToDraw ?? 2000;
 
   const dpr = window.devicePixelRatio ?? 1;
   const rect = canvas.getBoundingClientRect();
@@ -194,23 +230,17 @@ export function drawClusterPlot(canvas, clusters, options = {}) {
 
   const bounds = computeBounds(clusters);
 
-  // Draw city points per cluster
-  for (let i = 0; i < clusters.length; i++) {
-    const cluster = clusters[i];
-    const clusterIndex = cluster.index !== undefined ? cluster.index : i;
-    const color = getClusterColor(clusterIndex);
-    const cities = cluster.cities || cluster.sampleCities || [];
-
+  // Draw city points: use random sample when dataset is large so chart stays readable
+  const pointsToDraw = samplePointsForDrawing(clusters, maxPointsToDraw);
+  for (const { color, city } of pointsToDraw) {
+    const lat = city.latitude ?? city.lat;
+    const lon = city.longitude ?? city.lon;
+    if (!isValidCoord(lat, lon)) continue;
+    const { x, y } = toCanvas(lat, lon, bounds, cssWidth, cssHeight, insets);
     ctx.fillStyle = color;
-    for (const city of cities) {
-      const lat = city.latitude ?? city.lat;
-      const lon = city.longitude ?? city.lon;
-      if (!isValidCoord(lat, lon)) continue;
-      const { x, y } = toCanvas(lat, lon, bounds, cssWidth, cssHeight, insets);
-      ctx.beginPath();
-      ctx.arc(x, y, pointRadius, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    ctx.beginPath();
+    ctx.arc(x, y, pointRadius, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   // Draw centroids (larger, with stroke)

@@ -100,14 +100,17 @@ export function render(root, state) {
   const pagesRadio = qs('#bulk-data-source-pages', root);
   const targetCountGroup = qs('#bulk-target-count-group', root);
   const targetCountInput = qs('#bulkTargetCountInput', root);
+  const radiusInputGroup = qs('#radius-input-group', root);
   const hasSharedArrayBuffer = typeof SharedArrayBuffer !== 'undefined';
   if (radiusRadio && pagesRadio) {
     if (dataSource === 'pages') {
       pagesRadio.checked = true;
       if (targetCountGroup) targetCountGroup.style.display = hasSharedArrayBuffer ? '' : 'none';
+      if (radiusInputGroup) radiusInputGroup.style.display = 'none';
     } else {
       radiusRadio.checked = true;
       if (targetCountGroup) targetCountGroup.style.display = 'none';
+      if (radiusInputGroup) radiusInputGroup.style.display = '';
     }
     pagesRadio.disabled = !hasSharedArrayBuffer;
   }
