@@ -45,16 +45,15 @@ export function calculateMinMax(vectors) {
   }
 
   const dimensions = vectors[0].length;
-  const mins = new Array(dimensions).fill(Infinity);
-  const maxs = new Array(dimensions).fill(-Infinity);
-
-  for (const vector of vectors) {
+  const init = { mins: Array.from({ length: dimensions }, () => Infinity), maxs: Array.from({ length: dimensions }, () => -Infinity) };
+  const { mins, maxs } = vectors.reduce((acc, vector) => {
     for (let i = 0; i < dimensions; i++) {
       const value = vector[i];
-      if (value < mins[i]) mins[i] = value;
-      if (value > maxs[i]) maxs[i] = value;
+      if (value < acc.mins[i]) acc.mins[i] = value;
+      if (value > acc.maxs[i]) acc.maxs[i] = value;
     }
-  }
+    return acc;
+  }, init);
 
   return { min: mins, max: maxs };
 }
@@ -73,29 +72,24 @@ export function calculateMeanStd(vectors) {
   }
 
   const dimensions = vectors[0].length;
-  const means = new Array(dimensions).fill(0);
-  const stdDevs = new Array(dimensions).fill(0);
-
-  // Calculate means
-  for (const vector of vectors) {
+  const sumReducer = (acc, vector) => {
     for (let i = 0; i < dimensions; i++) {
-      means[i] += vector[i];
+      acc[i] += vector[i];
     }
-  }
-  for (let i = 0; i < dimensions; i++) {
-    means[i] /= vectors.length;
-  }
+    return acc;
+  };
+  const sums = vectors.reduce(sumReducer, Array.from({ length: dimensions }, () => 0));
+  const means = sums.map(s => s / vectors.length);
 
-  // Calculate standard deviations
-  for (const vector of vectors) {
+  const sumSqReducer = (acc, vector) => {
     for (let i = 0; i < dimensions; i++) {
       const diff = vector[i] - means[i];
-      stdDevs[i] += diff * diff;
+      acc[i] += diff * diff;
     }
-  }
-  for (let i = 0; i < dimensions; i++) {
-    stdDevs[i] = Math.sqrt(stdDevs[i] / vectors.length);
-  }
+    return acc;
+  };
+  const sumSqDiffs = vectors.reduce(sumSqReducer, Array.from({ length: dimensions }, () => 0));
+  const stdDevs = sumSqDiffs.map(s => Math.sqrt(s / vectors.length));
 
   return { mean: means, stdDev: stdDevs };
 }

@@ -10,6 +10,9 @@ import { kmeans as runKmeans } from '../kmeans/kmeans.js';
 import { kmeansSingle } from '../kmeans/kmeansSingle.js';
 import { kmeansParallel } from '../kmeans/kmeansParallel.js';
 
+/** Single effect handle for cancellation (AbortController). */
+const effectHandle = { abortController: null };
+
 /**
  * Fetch cities from API with race condition prevention
  */
@@ -238,32 +241,19 @@ export function bindEvents(root, store) {
 
   // Process button (run K-means)
   const runBulkKmeansBtn = qs('#runBulkKmeansBtn', root);
-  let currentPool = null; // Store reference to worker pool for cancellation
-  let currentOperation = null; // Store reference to current operation promise for cancellation
-  
   if (runBulkKmeansBtn) {
     on(runBulkKmeansBtn, 'click', async () => {
-      // Reset cancellation flag
       store.dispatch(actions.resetAsync());
-      
-      // Start operation and store promise
-      const operationPromise = startBulkLoadAndKmeans(store, (pool) => {
-        currentPool = pool;
-      });
-      currentOperation = operationPromise;
-      
+      const abortController = new AbortController();
+      effectHandle.abortController = abortController;
       try {
-        await operationPromise;
+        await startBulkLoadAndKmeans(store, { signal: abortController.signal });
       } catch (error) {
-        // Handle cancellation or errors
-        if (error.message === 'K-means cancelled' || store.getState().async.cancelled) {
-          // Already handled in startBulkLoadAndKmeans
-        } else {
+        if (error.message !== 'K-means cancelled' && !store.getState().async.cancelled) {
           console.error('Error in K-means operation:', error);
         }
       } finally {
-        currentOperation = null;
-        currentPool = null;
+        effectHandle.abortController = null;
       }
     });
   }
@@ -274,25 +264,13 @@ export function bindEvents(root, store) {
     on(cancelBtn, 'click', () => {
       const state = store.getState();
       const status = state.async?.status;
-      
-      // Only allow cancellation if operation is running
       if (status === 'loading' || status === 'clustering') {
         store.dispatch(actions.cancelOperation());
         store.dispatch(actions.addLog('Cancelamento solicitado pelo usuário...'));
-        
-        // Terminate workers immediately
-        if (currentPool) {
-          try {
-            currentPool.terminate();
-            store.dispatch(actions.addLog('Workers terminados'));
-          } catch (error) {
-            console.error('Error terminating workers:', error);
-            store.dispatch(actions.addLog('Erro ao terminar workers'));
-          }
-          currentPool = null;
+        if (effectHandle.abortController) {
+          effectHandle.abortController.abort();
+          store.dispatch(actions.addLog('Workers terminados'));
         }
-        
-        // Reset state to idle (preserve selected cities)
         store.dispatch(actions.setStatus('idle'));
         store.dispatch(actions.setProgress(0));
         store.dispatch(actions.setBulkLoaded(0));
@@ -421,10 +399,14 @@ const RADIUS_BULK_TARGET = 500_000;
  * 4. Run K-means on the dataset in shared memory.
  *
  * @param {Object} store - Redux store
- * @param {Function} onPoolCreated - Callback when worker pool is created (for cancellation)
+ * @param {Object} options - Options
+ * @param {AbortSignal} [options.signal] - AbortSignal for cancellation (terminates pools on abort)
  * @returns {Promise<Object|null>} null
  */
-async function startBulkLoadAndKmeans(store, onPoolCreated = null) {
+async function startBulkLoadAndKmeans(store, options = {}) {
+  const signal = options.signal || null;
+  let kmeansPool = null;
+
   const state = store.getState();
   const k = selectK(state);
   const selectedCities = selectSelectedCities(state);
@@ -491,8 +473,11 @@ async function startBulkLoadAndKmeans(store, onPoolCreated = null) {
       console.error('createWorkerPool error:', poolErr);
       return null;
     }
-    if (onPoolCreated) {
-      onPoolCreated(fetchPool);
+    if (signal) {
+      signal.addEventListener('abort', () => {
+        fetchPool?.terminate();
+        kmeansPool?.terminate();
+      });
     }
 
     const partialCitiesByWorker = [];
@@ -529,9 +514,19 @@ async function startBulkLoadAndKmeans(store, onPoolCreated = null) {
       tasks.push(runTask(i));
     }
 
-    await Promise.all(tasks);
+    try {
+      await Promise.all(tasks);
+    } catch (err) {
+      if (signal?.aborted) {
+        return null;
+      }
+      throw err;
+    }
+    if (signal?.aborted) {
+      fetchPool.terminate();
+      return null;
+    }
     fetchPool.terminate();
-    if (onPoolCreated) onPoolCreated(null);
 
     if (store.getState().async.cancelled) {
       store.dispatch(actions.addLog('Operação cancelada após carregamento.'));
@@ -614,9 +609,10 @@ async function startBulkLoadAndKmeans(store, onPoolCreated = null) {
         epsilon: 0.0001,
         seed: Date.now(),
         workerCount: kmeansWorkerCount,
-        isCancelled: () => store.getState().async.cancelled,
+        signal,
+        isCancelled: () => store.getState().async.cancelled || signal?.aborted,
         onPoolCreated: (pool) => {
-          if (onPoolCreated) onPoolCreated(pool);
+          kmeansPool = pool;
         },
         onProgress: (progress) => {
           const progressPercent = Math.min(100, Math.round((progress.iteration / 100) * 100));

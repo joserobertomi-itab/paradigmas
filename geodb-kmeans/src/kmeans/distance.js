@@ -1,8 +1,9 @@
 /**
  * Distance functions for K-means clustering
- * 
  * Pure functions for calculating distances between vectors
  */
+
+import { minMaxNormalize } from './normalize.js';
 
 /**
  * Calculate Euclidean distance between two 3D vectors
@@ -14,13 +15,10 @@ export function euclideanDistance(vector1, vector2) {
   if (!vector1 || !vector2 || vector1.length !== vector2.length) {
     return Infinity;
   }
-
-  let sumSquaredDiffs = 0;
-  for (let i = 0; i < vector1.length; i++) {
-    const diff = vector1[i] - vector2[i];
-    sumSquaredDiffs += diff * diff;
-  }
-
+  const sumSquaredDiffs = vector1.reduce(
+    (sum, _, i) => sum + (vector1[i] - vector2[i]) ** 2,
+    0
+  );
   return Math.sqrt(sumSquaredDiffs);
 }
 
@@ -34,14 +32,10 @@ export function euclideanDistanceSquared(vector1, vector2) {
   if (!vector1 || !vector2 || vector1.length !== vector2.length) {
     return Infinity;
   }
-
-  let sumSquaredDiffs = 0;
-  for (let i = 0; i < vector1.length; i++) {
-    const diff = vector1[i] - vector2[i];
-    sumSquaredDiffs += diff * diff;
-  }
-
-  return sumSquaredDiffs;
+  return vector1.reduce(
+    (sum, _, i) => sum + (vector1[i] - vector2[i]) ** 2,
+    0
+  );
 }
 
 /**
@@ -54,24 +48,19 @@ export function euclideanDistanceSquared(vector1, vector2) {
 export function manhattanDistance(point1, point2, normalization = null) {
   if (!point1 || !point2) return Infinity;
 
-  let lat1 = point1.latitude || 0;
-  let lon1 = point1.longitude || 0;
-  let pop1 = point1.population || 0;
-
-  let lat2 = point2.latitude || 0;
-  let lon2 = point2.longitude || 0;
-  let pop2 = point2.population || 0;
-
-  // Apply normalization if provided
-  if (normalization) {
-    lat1 = normalize(lat1, normalization.latMin, normalization.latMax);
-    lon1 = normalize(lon1, normalization.lonMin, normalization.lonMax);
-    pop1 = normalize(pop1, normalization.popMin, normalization.popMax);
-
-    lat2 = normalize(lat2, normalization.latMin, normalization.latMax);
-    lon2 = normalize(lon2, normalization.lonMin, normalization.lonMax);
-    pop2 = normalize(pop2, normalization.popMin, normalization.popMax);
-  }
+  const coord = (p, key) => {
+    const v = p[key] || 0;
+    if (!normalization) return v;
+    const minKey = key === 'latitude' ? 'latMin' : key === 'longitude' ? 'lonMin' : 'popMin';
+    const maxKey = key === 'latitude' ? 'latMax' : key === 'longitude' ? 'lonMax' : 'popMax';
+    return minMaxNormalize(v, normalization[minKey], normalization[maxKey]);
+  };
+  const lat1 = coord(point1, 'latitude');
+  const lon1 = coord(point1, 'longitude');
+  const pop1 = coord(point1, 'population');
+  const lat2 = coord(point2, 'latitude');
+  const lon2 = coord(point2, 'longitude');
+  const pop2 = coord(point2, 'population');
 
   return Math.abs(lat1 - lat2) + Math.abs(lon1 - lon2) + Math.abs(pop1 - pop2);
 }

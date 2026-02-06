@@ -255,15 +255,22 @@ Este documento verifica a implementação de todos os requisitos do trabalho.
 
 ---
 
-## ✅ Código Funcional (Reducer Puro, Funções Puras em Math)
+## ✅ Código Funcional (Reducer Puro, Um Único Estado Global)
 
 ### Verificação
+
+- [x] **Um único estado global**
+  - **Arquivo**: `src/app/state.js`, `src/app/events.js`
+  - **Evidência**:
+    - Store: uma única célula mutável `storeCell` (state + listeners + dispatching)
+    - Cancelamento: um único handle `effectHandle.abortController` (AbortSignal); sem refs a pool/promise em closure
+    - Efeitos na borda: workers e rate limiters como I/O; não adicionam estado global
 
 - [x] **Reducer puro**
   - **Arquivo**: `src/app/reducer.js` linhas 3-269
   - **Evidência**:
     - Sem efeitos colaterais
-    - Semmutação: sempre retorna novo estado com spread operator
+    - Sem mutação: sempre retorna novo estado com spread operator
     - Função pura: mesma entrada = mesma saída
     - Exemplo: linhas 72-79 - cria novos objetos/arrays
 
@@ -307,11 +314,11 @@ Este documento verifica a implementação de todos os requisitos do trabalho.
     - Renderizado em `<progress>` e texto
 
 - [x] **Cancelamento implementado**
-  - **Arquivo**: `src/app/events.js` linhas 188-206, `src/app/actions.js` linhas 143-145
+  - **Arquivo**: `src/app/events.js`, `src/app/actions.js` linhas 143-145
   - **Evidência**:
     - Action `ASYNC/CANCEL` sinaliza cancelamento
-    - Botão "Cancelar" termina workers: `pool.terminate()`
-    - Verificação durante operações: `if (store.getState().async.cancelled)`
+    - Botão "Cancelar" chama `effectHandle.abortController?.abort()`; pools terminados via AbortSignal dentro de `startBulkLoadAndKmeans`
+    - Verificação durante operações: `if (store.getState().async.cancelled)` e `signal?.aborted`
 
 - [x] **Logs durante operações**
   - **Arquivo**: `src/app/events.js` linhas 21-22, 335, 343, etc.

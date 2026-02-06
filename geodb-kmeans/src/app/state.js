@@ -2,30 +2,32 @@ import { reducer } from './reducer.js';
 import { initialState } from './initialState.js';
 
 /**
- * Creates a store with all mutable state encapsulated in closure.
- * No module-level mutable state; reducer remains pure (state, action) => newState.
+ * Creates a store with a single mutable cell (state + listeners + dispatching).
+ * Reducer remains pure (state, action) => newState.
  */
 export function createStore(reducerFn, initial) {
-  let currentState = initial;
-  let isDispatching = false;
-  const listeners = [];
+  const storeCell = {
+    state: initial,
+    listeners: [],
+    dispatching: false
+  };
 
   return {
     getState() {
-      return currentState;
+      return storeCell.state;
     },
 
     dispatch(action) {
-      if (isDispatching) {
+      if (storeCell.dispatching) {
         throw new Error('Reducers may not dispatch actions.');
       }
       try {
-        isDispatching = true;
-        currentState = reducerFn(currentState, action);
+        storeCell.dispatching = true;
+        storeCell.state = reducerFn(storeCell.state, action);
         return action;
       } finally {
-        isDispatching = false;
-        listeners.forEach(listener => listener());
+        storeCell.dispatching = false;
+        storeCell.listeners.forEach(listener => listener());
       }
     },
 
@@ -33,11 +35,11 @@ export function createStore(reducerFn, initial) {
       if (typeof listener !== 'function') {
         throw new Error('Expected listener to be a function.');
       }
-      listeners.push(listener);
+      storeCell.listeners.push(listener);
       return function unsubscribe() {
-        const index = listeners.indexOf(listener);
+        const index = storeCell.listeners.indexOf(listener);
         if (index > -1) {
-          listeners.splice(index, 1);
+          storeCell.listeners.splice(index, 1);
         }
       };
     }

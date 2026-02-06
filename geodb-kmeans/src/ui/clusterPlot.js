@@ -39,47 +39,43 @@ function isValidCoord(lat, lon) {
  * Collect bounds (min/max lat/lon) from clusters (cities + centroids) with padding.
  */
 function computeBounds(clusters) {
-  let minLat = Infinity;
-  let maxLat = -Infinity;
-  let minLon = Infinity;
-  let maxLon = -Infinity;
-
-  for (const cluster of clusters) {
+  const coords = clusters.flatMap(cluster => {
+    const out = [];
     const centroid = cluster.centroid || {};
     if (isValidCoord(centroid.latitude, centroid.longitude)) {
-      minLat = Math.min(minLat, centroid.latitude);
-      maxLat = Math.max(maxLat, centroid.latitude);
-      minLon = Math.min(minLon, centroid.longitude);
-      maxLon = Math.max(maxLon, centroid.longitude);
+      out.push([centroid.latitude, centroid.longitude]);
     }
     const cities = cluster.cities || cluster.sampleCities || [];
-    for (const city of cities) {
+    cities.forEach(city => {
       const lat = city.latitude ?? city.lat;
       const lon = city.longitude ?? city.lon;
-      if (isValidCoord(lat, lon)) {
-        minLat = Math.min(minLat, lat);
-        maxLat = Math.max(maxLat, lat);
-        minLon = Math.min(minLon, lon);
-        maxLon = Math.max(maxLon, lon);
-      }
-    }
-  }
+      if (isValidCoord(lat, lon)) out.push([lat, lon]);
+    });
+    return out;
+  });
 
-  if (minLat === Infinity) {
-    minLat = -90;
-    maxLat = 90;
-    minLon = -180;
-    maxLon = 180;
-  } else {
-    const padLat = Math.max(PADDING_DEG, (maxLat - minLat) * 0.05 || PADDING_DEG);
-    const padLon = Math.max(PADDING_DEG, (maxLon - minLon) * 0.05 || PADDING_DEG);
-    minLat -= padLat;
-    maxLat += padLat;
-    minLon -= padLon;
-    maxLon += padLon;
-  }
+  const initial = { minLat: Infinity, maxLat: -Infinity, minLon: Infinity, maxLon: -Infinity };
+  const bounds = coords.reduce(
+    (acc, [lat, lon]) => ({
+      minLat: Math.min(acc.minLat, lat),
+      maxLat: Math.max(acc.maxLat, lat),
+      minLon: Math.min(acc.minLon, lon),
+      maxLon: Math.max(acc.maxLon, lon)
+    }),
+    initial
+  );
 
-  return { minLat, maxLat, minLon, maxLon };
+  if (bounds.minLat === Infinity) {
+    return { minLat: -90, maxLat: 90, minLon: -180, maxLon: 180 };
+  }
+  const padLat = Math.max(PADDING_DEG, (bounds.maxLat - bounds.minLat) * 0.05 || PADDING_DEG);
+  const padLon = Math.max(PADDING_DEG, (bounds.maxLon - bounds.minLon) * 0.05 || PADDING_DEG);
+  return {
+    minLat: bounds.minLat - padLat,
+    maxLat: bounds.maxLat + padLat,
+    minLon: bounds.minLon - padLon,
+    maxLon: bounds.maxLon + padLon
+  };
 }
 
 /**
