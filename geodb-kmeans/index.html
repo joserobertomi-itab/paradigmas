@@ -65,7 +65,32 @@
       <section class="processing-section">
         <h2>Processamento</h2>
         <div class="processing-controls">
-          <div class="k-input-group">
+          <div class="k-input-group bulk-data-source-group">
+            <label>Fonte dos dados:</label>
+            <div class="bulk-data-source-options">
+              <label class="radio-label">
+                <input type="radio" name="bulk-data-source" id="bulk-data-source-radius" value="radius" checked />
+                Por raio (cidades selecionadas)
+              </label>
+              <label class="radio-label" for="bulk-data-source-pages">
+                <input type="radio" name="bulk-data-source" id="bulk-data-source-pages" value="pages" />
+                Por listagem (páginas, ~10k)
+              </label>
+            </div>
+          </div>
+          <div class="k-input-group" id="bulk-target-count-group" style="display: none;">
+            <label for="bulkTargetCountInput">Quantidade alvo (cidades):</label>
+            <input 
+              type="number" 
+              id="bulkTargetCountInput" 
+              class="k-input" 
+              min="1000" 
+              max="50000" 
+              step="500" 
+              value="10000"
+            />
+          </div>
+          <div class="k-input-group" id="radius-input-group">
             <label for="radiusInput">Raio (km):</label>
             <input 
               type="number" 

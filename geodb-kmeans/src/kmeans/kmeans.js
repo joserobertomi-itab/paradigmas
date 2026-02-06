@@ -18,6 +18,7 @@ import KmeansWorker from '../workers/kmeansWorker.js?worker&inline';
  * @param {number} options.epsilon - Convergence threshold (default: 0.0001)
  * @param {number} options.workerCount - Number of workers (default: 4)
  * @param {Function} options.onProgress - Progress callback
+ * @param {AbortSignal} [options.signal] - AbortSignal for cancellation (pool terminated on abort)
  * @returns {Promise<Object>} Clustering results
  */
 export async function kmeans(buffers, k, options = {}) {
@@ -27,7 +28,8 @@ export async function kmeans(buffers, k, options = {}) {
     workerCount = 4,
     onProgress = null,
     isCancelled = () => false,
-    onPoolCreated = null
+    onPoolCreated = null,
+    signal = null
   } = options;
 
   const totalPoints = buffers.writeIndex[0];
@@ -77,8 +79,8 @@ export async function kmeans(buffers, k, options = {}) {
 
   try {
     while (iterations < maxIter && !converged) {
-      // Check for cancellation
-      if (isCancelled()) {
+      // Check for cancellation (state flag or AbortSignal)
+      if (isCancelled() || signal?.aborted) {
         pool.terminate();
         throw new Error('K-means cancelled');
       }

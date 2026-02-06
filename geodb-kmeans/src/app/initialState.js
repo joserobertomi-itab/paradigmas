@@ -27,7 +27,9 @@ export const initialState = {
   // Bulk loading
   bulk: {
     totalTarget: 10000,
-    loaded: 0
+    loaded: 0,
+    dataSource: 'radius', // 'radius' | 'pages'
+    targetCount: 10000
   },
 
   // K-means clustering

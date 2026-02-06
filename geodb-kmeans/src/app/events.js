@@ -1,14 +1,18 @@
 import { qs, on } from '../ui/dom.js';
 import * as actions from './actions.js';
-import { selectK, selectSelectedCities, selectRadius, selectQuery, selectSort, selectPage, selectPageSize } from './selectors.js';
+import { selectK, selectSelectedCities, selectRadius, selectQuery, selectSort, selectPage, selectPageSize, selectBulkDataSource, selectBulkTargetCount } from './selectors.js';
 import { findCities } from '../api/geodbClient.js';
 import { pageToOffset } from '../api/paging.js';
 import { createSharedCityBuffers, getAllCities, writeCity } from '../workers/sharedMemory.js';
 import { createWorkerPool } from '../workers/workerPool.js';
 import RadiusFetchWorker from '../workers/radiusFetchWorker.js?worker&inline';
+import FetchWorker from '../workers/fetchWorker.js?worker&inline';
 import { kmeans as runKmeans } from '../kmeans/kmeans.js';
 import { kmeansSingle } from '../kmeans/kmeansSingle.js';
 import { kmeansParallel } from '../kmeans/kmeansParallel.js';
+
+/** Single effect handle for cancellation (AbortController). */
+const effectHandle = { abortController: null };
 
 /**
  * Fetch cities from API with race condition prevention
@@ -236,34 +240,45 @@ export function bindEvents(root, store) {
     });
   }
 
+  // Bulk data source (radius | pages)
+  on(root, 'change', (e) => {
+    if (e.target.name === 'bulk-data-source' && e.target.type === 'radio') {
+      const value = e.target.value === 'pages' ? 'pages' : 'radius';
+      store.dispatch(actions.setBulkDataSource(value));
+    }
+  });
+
+  // Bulk target count (when "Por listagem" is selected)
+  const bulkTargetCountInput = qs('#bulkTargetCountInput', root);
+  if (bulkTargetCountInput) {
+    on(bulkTargetCountInput, 'input', (e) => {
+      const n = parseInt(e.target.value, 10);
+      if (!isNaN(n) && n >= 1000 && n <= 50000) {
+        store.dispatch(actions.setBulkTargetCount(n));
+      }
+    });
+  }
+
   // Process button (run K-means)
   const runBulkKmeansBtn = qs('#runBulkKmeansBtn', root);
-  let currentPool = null; // Store reference to worker pool for cancellation
-  let currentOperation = null; // Store reference to current operation promise for cancellation
-  
   if (runBulkKmeansBtn) {
     on(runBulkKmeansBtn, 'click', async () => {
-      // Reset cancellation flag
       store.dispatch(actions.resetAsync());
-      
-      // Start operation and store promise
-      const operationPromise = startBulkLoadAndKmeans(store, (pool) => {
-        currentPool = pool;
-      });
-      currentOperation = operationPromise;
-      
+      const abortController = new AbortController();
+      effectHandle.abortController = abortController;
+      const dataSource = selectBulkDataSource(store.getState());
       try {
-        await operationPromise;
-      } catch (error) {
-        // Handle cancellation or errors
-        if (error.message === 'K-means cancelled' || store.getState().async.cancelled) {
-          // Already handled in startBulkLoadAndKmeans
+        if (dataSource === 'pages') {
+          await startPaginatedLoadAndKmeans(store, { signal: abortController.signal });
         } else {
+          await startBulkLoadAndKmeans(store, { signal: abortController.signal });
+        }
+      } catch (error) {
+        if (error.message !== 'K-means cancelled' && !store.getState().async.cancelled) {
           console.error('Error in K-means operation:', error);
         }
       } finally {
-        currentOperation = null;
-        currentPool = null;
+        effectHandle.abortController = null;
       }
     });
   }
@@ -274,25 +289,13 @@ export function bindEvents(root, store) {
     on(cancelBtn, 'click', () => {
       const state = store.getState();
       const status = state.async?.status;
-      
-      // Only allow cancellation if operation is running
       if (status === 'loading' || status === 'clustering') {
         store.dispatch(actions.cancelOperation());
         store.dispatch(actions.addLog('Cancelamento solicitado pelo usuário...'));
-        
-        // Terminate workers immediately
-        if (currentPool) {
-          try {
-            currentPool.terminate();
-            store.dispatch(actions.addLog('Workers terminados'));
-          } catch (error) {
-            console.error('Error terminating workers:', error);
-            store.dispatch(actions.addLog('Erro ao terminar workers'));
-          }
-          currentPool = null;
+        if (effectHandle.abortController) {
+          effectHandle.abortController.abort();
+          store.dispatch(actions.addLog('Workers terminados'));
         }
-        
-        // Reset state to idle (preserve selected cities)
         store.dispatch(actions.setStatus('idle'));
         store.dispatch(actions.setProgress(0));
         store.dispatch(actions.setBulkLoaded(0));
@@ -411,6 +414,290 @@ export function bindEvents(root, store) {
 /** Max capacity for progress display during fetch (actual buffer size is set after merge) */
 const RADIUS_BULK_TARGET = 500_000;
 
+/** Margin for paginated shared buffer capacity (targetCount + margin) */
+const PAGINATED_BUFFER_MARGIN = 2000;
+
+/**
+ * Start paginated load (distinct API pages per worker) and K-means clustering.
+ * Workers fetch strided offsets (worker i: startOffset = i * pageSize, then i + totalWorkers*pageSize, ...).
+ * Main fills idsLocal from city-ids messages; then runs K-means on getAllCities(buffers).
+ *
+ * @param {Object} store - Redux store
+ * @param {Object} options - Options
+ * @param {AbortSignal} [options.signal] - AbortSignal for cancellation
+ * @returns {Promise<null>}
+ */
+async function startPaginatedLoadAndKmeans(store, options = {}) {
+  const signal = options.signal || null;
+  let kmeansPool = null;
+
+  const state = store.getState();
+  const k = selectK(state);
+  const targetCount = selectBulkTargetCount(state);
+  const sort = selectSort(state);
+
+  if (k < 2) {
+    store.dispatch(actions.setError(`k deve ser >= 2. Valor atual: ${k}.`));
+    store.dispatch(actions.setStatus('error'));
+    store.dispatch(actions.addLog(`Erro: k=${k} é inválido (mínimo: 2)`));
+    return null;
+  }
+
+  if (typeof SharedArrayBuffer === 'undefined') {
+    store.dispatch(actions.setError('SharedArrayBuffer não disponível. Use HTTPS ou localhost.'));
+    store.dispatch(actions.setStatus('error'));
+    return null;
+  }
+
+  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+  const hardwareConcurrency = navigator.hardwareConcurrency || 4;
+  const fetchWorkerCount = Math.max(2, Math.min(8, hardwareConcurrency));
+  const pageSize = 100;
+  const capacity = Math.min(targetCount + PAGINATED_BUFFER_MARGIN, 50000);
+
+  try {
+    const startTime = performance.now();
+    store.dispatch(actions.resetAsync());
+    store.dispatch(actions.setStatus('loading'));
+    store.dispatch(actions.clearLogs());
+    store.dispatch(actions.addLog(`Carregando até ${targetCount} cidades por páginas (${fetchWorkerCount} workers, página=${pageSize})...`));
+    store.dispatch(actions.setProgress(0));
+    store.dispatch(actions.setBulkLoaded(0));
+    store.dispatch(actions.setBulkTotalTarget(targetCount));
+
+    let fetchPool;
+    try {
+      fetchPool = createWorkerPool({ size: fetchWorkerCount, WorkerConstructor: FetchWorker });
+    } catch (poolErr) {
+      const poolMsg = (poolErr && (poolErr.message ?? poolErr.error?.message)) || String(poolErr);
+      store.dispatch(actions.setError(`Falha ao criar workers de carregamento: ${poolMsg}`));
+      store.dispatch(actions.setStatus('error'));
+      store.dispatch(actions.addLog(`Erro: ${poolMsg}`));
+      console.error('createWorkerPool error:', poolErr);
+      return null;
+    }
+
+    if (signal) {
+      signal.addEventListener('abort', () => {
+        fetchPool?.terminate();
+        kmeansPool?.terminate();
+      });
+    }
+
+    const buffers = createSharedCityBuffers(capacity);
+    const idToMeta = {};
+
+    const sharedBuffers = {
+      writeIndex: buffers.writeIndex,
+      latitudes: buffers.latitudes,
+      longitudes: buffers.longitudes,
+      populations: buffers.populations,
+      localIndices: buffers.localIndices,
+      capacity: buffers.capacity
+    };
+
+    const runTask = (workerId) => {
+      const startOffset = workerId * pageSize;
+      const endOffset = targetCount;
+      return fetchPool.runTask(
+        {
+          workerId,
+          totalWorkers: fetchWorkerCount,
+          pageSize,
+          startOffset,
+          endOffset,
+          apiBaseUrl,
+          sort,
+          sharedBuffers
+        },
+        (msg) => {
+          if (msg.type === 'progress' && msg.payload != null) {
+            const loaded = Atomics.load(buffers.writeIndex, 0);
+            store.dispatch(actions.setBulkLoaded(loaded));
+          }
+          if (msg.type === 'city-ids' && msg.payload?.cityData) {
+            for (const { slot, id, name, country } of msg.payload.cityData) {
+              buffers.idsLocal[slot] = id;
+              idToMeta[String(id)] = { name: name ?? '', country: country ?? '' };
+            }
+          }
+        }
+      );
+    };
+
+    const tasks = [];
+    for (let i = 0; i < fetchWorkerCount; i++) {
+      if (store.getState().async.cancelled) break;
+      tasks.push(runTask(i));
+    }
+
+    try {
+      await Promise.all(tasks);
+    } catch (err) {
+      if (signal?.aborted) {
+        return null;
+      }
+      throw err;
+    }
+    if (signal?.aborted) {
+      fetchPool.terminate();
+      return null;
+    }
+    fetchPool.terminate();
+
+    if (store.getState().async.cancelled) {
+      store.dispatch(actions.addLog('Operação cancelada após carregamento.'));
+      return null;
+    }
+
+    const count = Atomics.load(buffers.writeIndex, 0);
+    store.dispatch(actions.setBulkLoaded(count));
+    store.dispatch(actions.setProgress(100));
+    store.dispatch(actions.addLog(`Dataset: ${count} cidade(s) carregadas por páginas.`));
+
+    if (count < 2) {
+      store.dispatch(actions.setError('Poucas cidades para K-means (mínimo 2). Aumente a quantidade alvo.'));
+      store.dispatch(actions.setStatus('error'));
+      return null;
+    }
+
+    if (k > count) {
+      store.dispatch(actions.setError(`k (${k}) não pode ser maior que o número de cidades (${count}).`));
+      store.dispatch(actions.setStatus('error'));
+      store.dispatch(actions.addLog(`Erro: k=${k} > dataset.length=${count}`));
+      return null;
+    }
+
+    const finalDataset = getAllCities(buffers);
+    const loadTimeMs = performance.now() - startTime;
+    store.dispatch(actions.addLog(`Dataset preparado: ${finalDataset.length} cidade(s), k=${k}. Iniciando K-means...`));
+
+    if (store.getState().async.cancelled) {
+      store.dispatch(actions.addLog('Operação cancelada antes de iniciar K-means.'));
+      return null;
+    }
+
+    const kmeansStartTime = performance.now();
+    store.dispatch(actions.setStatus('clustering'));
+    store.dispatch(actions.setProgress(0));
+    const kmeansWorkerCount = Math.max(2, Math.min(8, hardwareConcurrency - 1));
+    store.dispatch(actions.addLog(`K-means paralelo com ${kmeansWorkerCount} workers (k=${k})...`));
+
+    let kmeansResult;
+    let workersUsed = kmeansWorkerCount;
+
+    try {
+      kmeansResult = await kmeansParallel(finalDataset, k, {
+        maxIter: 100,
+        epsilon: 0.0001,
+        seed: Date.now(),
+        workerCount: kmeansWorkerCount,
+        signal,
+        isCancelled: () => store.getState().async.cancelled || signal?.aborted,
+        onPoolCreated: (pool) => {
+          kmeansPool = pool;
+        },
+        onProgress: (progress) => {
+          const progressPercent = Math.min(100, Math.round((progress.iteration / 100) * 100));
+          store.dispatch(actions.setProgress(progressPercent));
+          store.dispatch(actions.setKmeansIterations(progress.iteration));
+          store.dispatch(actions.addLog(`Iteração ${progress.iteration}: mudança média = ${progress.avgChange.toFixed(6)}`));
+          if (progress.converged) {
+            store.dispatch(actions.addLog('Convergência atingida!'));
+          }
+        }
+      });
+    } catch (error) {
+      if (error.message === 'K-means cancelled') {
+        throw error;
+      }
+      store.dispatch(actions.addLog(`Aviso: K-means paralelo falhou (${error.message}), usando versão single-thread...`));
+      workersUsed = 1;
+      kmeansResult = kmeansSingle(finalDataset, k, {
+        maxIter: 100,
+        epsilon: 0.0001,
+        seed: Date.now(),
+        onProgress: (progress) => {
+          const progressPercent = Math.min(100, Math.round((progress.iteration / 100) * 100));
+          store.dispatch(actions.setProgress(progressPercent));
+          store.dispatch(actions.setKmeansIterations(progress.iteration));
+          store.dispatch(actions.addLog(`Iteração ${progress.iteration}: mudança média = ${progress.avgChange.toFixed(6)}`));
+          if (progress.converged) {
+            store.dispatch(actions.addLog('Convergência atingida!'));
+          }
+        }
+      });
+    }
+
+    const kmeansTimeMs = performance.now() - kmeansStartTime;
+    const totalTimeMs = performance.now() - startTime;
+
+    store.dispatch(actions.addLog(`K-means concluído em ${kmeansResult.iterations} iterações em ${(kmeansTimeMs / 1000).toFixed(2)}s`));
+    store.dispatch(actions.addLog(`Clusters criados: ${kmeansResult.clusters.length}`));
+    kmeansResult.clusterSizes.forEach((size, i) => {
+      store.dispatch(actions.addLog(`Cluster ${i}: ${size} cidade(s)`));
+    });
+
+    const enrichCity = (c) => ({
+      ...c,
+      name: idToMeta[c.id]?.name ?? 'Unknown',
+      country: idToMeta[c.id]?.country ?? 'Unknown'
+    });
+    const formattedClusters = kmeansResult.clusters.map((cluster, index) => {
+      const cities = (cluster.cities || []).map(enrichCity);
+      return {
+        index,
+        size: cluster.size || 0,
+        centroid: cluster.centroid || {},
+        cities,
+        sampleCities: cities.slice(0, 30)
+      };
+    });
+
+    const assignmentsById = {};
+    if (kmeansResult.assignments && finalDataset.length <= 10000) {
+      for (let i = 0; i < finalDataset.length && i < kmeansResult.assignments.length; i++) {
+        const city = finalDataset[i];
+        if (city && city.id) {
+          assignmentsById[String(city.id)] = kmeansResult.assignments[i];
+        }
+      }
+    }
+
+    store.dispatch(actions.setClusters(formattedClusters));
+    store.dispatch(actions.setKmeansIterations(kmeansResult.iterations));
+    store.dispatch(actions.setKmeansStatus('done'));
+    store.dispatch(actions.setKmeansMetrics({
+      loadTimeMs,
+      kmeansTimeMs,
+      totalTimeMs,
+      workersUsed,
+      k,
+      datasetSize: finalDataset.length,
+      radiusKm: 0,
+      assignmentsById: Object.keys(assignmentsById).length > 0 ? assignmentsById : null
+    }));
+    store.dispatch(actions.setProgress(100));
+    store.dispatch(actions.setStatus('done'));
+    store.dispatch(actions.addLog(`Processo concluído em ${(totalTimeMs / 1000).toFixed(2)}s total!`));
+  } catch (error) {
+    const msg = (error && (error.message ?? error.error?.message ?? (typeof error === 'string' ? error : null))) || String(error);
+    if (msg === 'K-means cancelled' || store.getState().async.cancelled) {
+      store.dispatch(actions.addLog('Operação cancelada pelo usuário'));
+      store.dispatch(actions.setStatus('idle'));
+      store.dispatch(actions.setProgress(0));
+      return null;
+    }
+    store.dispatch(actions.setError(`Erro durante processamento: ${msg}`));
+    store.dispatch(actions.setStatus('error'));
+    store.dispatch(actions.addLog(`Erro: ${msg}`));
+    console.error('Error during paginated load/kmeans:', error);
+    if (error && error.stack) console.error(error.stack);
+  }
+
+  return null;
+}
+
 /**
  * Start radius-based load and K-means clustering.
  *
@@ -421,10 +708,14 @@ const RADIUS_BULK_TARGET = 500_000;
  * 4. Run K-means on the dataset in shared memory.
  *
  * @param {Object} store - Redux store
- * @param {Function} onPoolCreated - Callback when worker pool is created (for cancellation)
+ * @param {Object} options - Options
+ * @param {AbortSignal} [options.signal] - AbortSignal for cancellation (terminates pools on abort)
  * @returns {Promise<Object|null>} null
  */
-async function startBulkLoadAndKmeans(store, onPoolCreated = null) {
+async function startBulkLoadAndKmeans(store, options = {}) {
+  const signal = options.signal || null;
+  let kmeansPool = null;
+
   const state = store.getState();
   const k = selectK(state);
   const selectedCities = selectSelectedCities(state);
@@ -491,8 +782,11 @@ async function startBulkLoadAndKmeans(store, onPoolCreated = null) {
       console.error('createWorkerPool error:', poolErr);
       return null;
     }
-    if (onPoolCreated) {
-      onPoolCreated(fetchPool);
+    if (signal) {
+      signal.addEventListener('abort', () => {
+        fetchPool?.terminate();
+        kmeansPool?.terminate();
+      });
     }
 
     const partialCitiesByWorker = [];
@@ -529,9 +823,19 @@ async function startBulkLoadAndKmeans(store, onPoolCreated = null) {
       tasks.push(runTask(i));
     }
 
-    await Promise.all(tasks);
+    try {
+      await Promise.all(tasks);
+    } catch (err) {
+      if (signal?.aborted) {
+        return null;
+      }
+      throw err;
+    }
+    if (signal?.aborted) {
+      fetchPool.terminate();
+      return null;
+    }
     fetchPool.terminate();
-    if (onPoolCreated) onPoolCreated(null);
 
     if (store.getState().async.cancelled) {
       store.dispatch(actions.addLog('Operação cancelada após carregamento.'));
@@ -614,9 +918,10 @@ async function startBulkLoadAndKmeans(store, onPoolCreated = null) {
         epsilon: 0.0001,
         seed: Date.now(),
         workerCount: kmeansWorkerCount,
-        isCancelled: () => store.getState().async.cancelled,
+        signal,
+        isCancelled: () => store.getState().async.cancelled || signal?.aborted,
         onPoolCreated: (pool) => {
-          if (onPoolCreated) onPoolCreated(pool);
+          kmeansPool = pool;
         },
         onProgress: (progress) => {
           const progressPercent = Math.min(100, Math.round((progress.iteration / 100) * 100));

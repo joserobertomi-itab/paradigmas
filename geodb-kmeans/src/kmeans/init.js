@@ -87,40 +87,35 @@ export function kmeansPlusPlus(data, k, distanceFn, normalization = null) {
 
   // Select remaining k-1 centroids
   for (let i = 1; i < k; i++) {
-    const distances = data.map(point => {
-      // Find minimum distance to existing centroids
-      let minDist = Infinity;
-      for (const centroid of centroids) {
-        const dist = distanceFn(point, centroid, normalization);
-        if (dist < minDist) {
-          minDist = dist;
-        }
-      }
-      return minDist;
-    });
+    const distances = data.map(point =>
+      centroids.reduce(
+        (minDist, centroid) =>
+          Math.min(minDist, distanceFn(point, centroid, normalization)),
+        Infinity
+      )
+    );
 
-    // Calculate probabilities (squared distances)
     const probabilities = distances.map(d => d * d);
     const sum = probabilities.reduce((acc, p) => acc + p, 0);
-    const normalizedProbs = probabilities.map(p => p / sum);
+    const normalizedProbs = sum > 0 ? probabilities.map(p => p / sum) : probabilities.map(() => 1 / data.length);
 
-    // Select next centroid based on probabilities
-    let random = Math.random();
-    let cumulative = 0;
-    let selectedIndex = 0;
-
-    for (let j = 0; j < normalizedProbs.length; j++) {
-      cumulative += normalizedProbs[j];
-      if (random <= cumulative) {
-        selectedIndex = j;
-        break;
-      }
-    }
+    const random = Math.random();
+    const { selectedIndex } = normalizedProbs.reduce(
+      (acc, p, j) => {
+        acc.cumulative += p;
+        if (acc.selectedIndex === -1 && random <= acc.cumulative) {
+          acc.selectedIndex = j;
+        }
+        return acc;
+      },
+      { cumulative: 0, selectedIndex: -1 }
+    );
+    const idx = selectedIndex >= 0 ? selectedIndex : 0;
 
     centroids.push({
-      latitude: data[selectedIndex].latitude || 0,
-      longitude: data[selectedIndex].longitude || 0,
-      population: data[selectedIndex].population || 0
+      latitude: data[idx].latitude || 0,
+      longitude: data[idx].longitude || 0,
+      population: data[idx].population || 0
     });
   }
 

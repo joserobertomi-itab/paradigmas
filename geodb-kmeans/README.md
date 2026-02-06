@@ -279,15 +279,13 @@ export function selectSelectedCities(state) {
 }
 ```
 
-#### Paradigma funcional: estado encapsulado em closures
+#### Paradigma funcional: um único estado global
 
-O projeto evita estado global mutável em nível de módulo; o estado mutável necessário fica encapsulado em closures:
+O projeto segue o paradigma funcional com **um único estado global**:
 
-- **Store** (`src/app/state.js`): `createStore(reducer, initial)` mantém `currentState`, `isDispatching` e `listeners` **dentro da closure** do store retornado. Nenhuma variável mutável é exportada em nível de módulo.
-- **Cliente API** (`src/api/geodbClient.js`): O cliente padrão é obtido via `getDefaultClient()`, implementado com uma IIFE que guarda `clientPromise` em closure. Ordenação de resultados feita de forma **imutável** (`[...normalized].sort(...)`).
-- **Fetch Worker** (`src/workers/fetchWorker.js`): A fila de requisições e o contador de requisições ativas ficam dentro de `createRateLimitedFetcher()`; o módulo exporta apenas a função de fetch resultante.
-
-Assim, o código segue o paradigma funcional: reducers e seletores permanecem puros; efeitos e estado mutável ficam contidos em poucos pontos e não vazam como globais.
+- **Estado único** (`src/app/state.js`): Uma única célula mutável `storeCell` contém `state`, `listeners` e `dispatching`. Toda a aplicação é derivada desse estado imutável (árvore) atualizado apenas por um reducer puro.
+- **Efeito único para cancelamento** (`src/app/events.js`): Um único handle `effectHandle.abortController` permite cancelar a operação em andamento via `AbortSignal`; não há refs a pools ou promises em closure.
+- **Efeitos na borda**: Workers, rate limiters e atualização do DOM permanecem como camada de I/O; não introduzem novo estado global. Reducer e seletores são puros; efeitos são disparados apenas a partir dos event handlers e da assinatura do store.
 
 ### 6. Fluxo de Clustering com Endpoint /radius
 
@@ -773,7 +771,7 @@ graph LR
 geodb-kmeans/
 ├── src/
 │   ├── app/                  # Lógica da aplicação
-│   │   ├── state.js          # Store funcional (estado em closure)
+│   │   ├── state.js          # Store funcional (única célula: state + listeners)
 │   │   ├── reducer.js        # Reducers puros
 │   │   ├── actions.js        # Action creators
 │   │   ├── selectors.js      # Selectors funcionais
@@ -815,7 +813,7 @@ geodb-kmeans/
 
 ## 🔑 Conceitos Implementados
 
-- ✅ **Store Funcional**: Mini-Redux sem dependências; estado em closure (sem variáveis globais mutáveis)
+- ✅ **Store Funcional**: Mini-Redux sem dependências; único estado global (uma célula + um handle de cancelamento)
 - ✅ **Paradigma Funcional**: Estado encapsulado em closures (store, cliente API, fetcher no worker); ordenação imutável
 - ✅ **Web Workers**: Processamento paralelo (radius fetch, K-means)
 - ✅ **SharedArrayBuffer**: Memória compartilhada com Atomics

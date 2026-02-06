@@ -66,6 +66,7 @@ function assignmentsStable(oldAssignments, newAssignments) {
  * @param {Function} options.onProgress - Progress callback
  * @param {Function} options.isCancelled - Cancellation check function
  * @param {Function} options.onPoolCreated - Callback when pool is created
+ * @param {AbortSignal} [options.signal] - AbortSignal for cancellation (pool terminated on abort)
  * @returns {Promise<Object>} Clustering results
  */
 export async function kmeansParallel(cities, k, options = {}) {
@@ -76,7 +77,8 @@ export async function kmeansParallel(cities, k, options = {}) {
     workerCount = 4,
     onProgress = null,
     isCancelled = () => false,
-    onPoolCreated = null
+    onPoolCreated = null,
+    signal = null
   } = options;
 
   // Validate inputs
@@ -122,8 +124,8 @@ export async function kmeansParallel(cities, k, options = {}) {
 
   try {
     while (iterations < maxIter && !converged) {
-      // Check for cancellation
-      if (isCancelled()) {
+      // Check for cancellation (state flag or AbortSignal)
+      if (isCancelled() || signal?.aborted) {
         pool.terminate();
         throw new Error('K-means cancelled');
       }

@@ -77,7 +77,7 @@ function createRateLimitedFetcher() {
       });
   }
 
-  return function fetchCitiesPage({ apiBaseUrl, sort, offset, limit }) {
+  return function fetchCitiesPage({ apiBaseUrl, sort, prefix, offset, limit }) {
     return new Promise((resolve, reject) => {
       requestQueue.push(async () => {
         try {
@@ -85,6 +85,12 @@ function createRateLimitedFetcher() {
             limit: limit.toString(),
             offset: offset.toString()
           });
+          if (sort) {
+            params.set('sort', sort);
+          }
+          if (prefix) {
+            params.set('prefix', prefix);
+          }
           const baseUrl = apiBaseUrl || 'http://localhost:8000';
           const url = `${baseUrl}/api/v1/cities?${params.toString()}`;
 
@@ -105,8 +111,9 @@ function createRateLimitedFetcher() {
             throw new Error(errorMessage);
           }
 
-          const cities = await response.json();
-          resolve({ data: cities || [] });
+          const body = await response.json();
+          const data = Array.isArray(body) ? body : (body?.data ?? []);
+          resolve({ data });
         } catch (error) {
           reject(error);
         }
@@ -117,6 +124,23 @@ function createRateLimitedFetcher() {
 }
 
 const fetchCitiesPage = createRateLimitedFetcher();
+
+/**
+ * Pure: compute next loop state from current state and fetch result.
+ * @param {{ fetched: number, written: number, offset: number }} state
+ * @param {{ fetchedDelta: number, writtenDelta: number, pageSize: number, totalWorkers: number, capacityExceeded: boolean }} result
+ * @returns {{ fetched: number, written: number, offset: number, done: boolean }}
+ */
+function nextState(state, result) {
+  const { fetched, written, offset } = state;
+  const { fetchedDelta, writtenDelta, pageSize, totalWorkers, capacityExceeded } = result;
+  return {
+    fetched: fetched + fetchedDelta,
+    written: written + writtenDelta,
+    offset: offset + totalWorkers * pageSize,
+    done: fetchedDelta < pageSize || capacityExceeded
+  };
+}
 
 /**
  * Normalize city data from FastAPI format
@@ -155,127 +179,109 @@ self.onmessage = async function(e) {
   }
 
   try {
-    let fetched = 0;
-    let written = 0;
-    let currentOffset = startOffset;
+    let state = { fetched: 0, written: 0, offset: startOffset, done: false };
 
-    // Fetch pages in strided pattern
-    while (currentOffset < endOffset) {
-      // Send progress update
+    while (state.offset < endOffset && !state.done) {
       self.postMessage({
         taskId,
         type: 'progress',
         payload: {
           workerId,
-          offset: currentOffset,
-          fetched,
-          written
+          offset: state.offset,
+          fetched: state.fetched,
+          written: state.written
         }
       });
 
       try {
-        // Fetch page
         const result = await fetchCitiesPage({
           apiBaseUrl,
           sort,
-          offset: currentOffset,
+          offset: state.offset,
           limit: pageSize
         });
 
         const cities = result.data || [];
-        fetched += cities.length;
-
-        // Write cities to shared buffers
-        // Note: idsLocal array is not shared, so we coordinate via messages
         const cityIds = [];
-        
+        let capacityExceeded = false;
+
         for (const city of cities) {
           const normalized = normalizeCity(city);
-          
-          // Allocate slot atomically
           const slot = allocateSlot(sharedBuffers.writeIndex);
-          
+
           if (slot >= sharedBuffers.capacity) {
+            capacityExceeded = true;
             self.postMessage({
               taskId,
               type: 'progress',
               payload: {
                 workerId,
-                offset: currentOffset,
-                fetched,
-                written,
+                offset: state.offset,
+                fetched: state.fetched + cities.length,
+                written: state.written,
                 capacityExceeded: true
               }
             });
             break;
           }
 
-          // Write numeric data to shared buffers atomically
           sharedBuffers.latitudes[slot] = normalized.latitude || 0;
           sharedBuffers.longitudes[slot] = normalized.longitude || 0;
           sharedBuffers.populations[slot] = normalized.population || 0;
-          sharedBuffers.localIndices[slot] = slot; // Use slot as temporary index
-          
-          // Store ID, name, country to send back to main thread (for display in cities-sample)
+          sharedBuffers.localIndices[slot] = slot;
           cityIds.push({
             slot,
             id: normalized.id,
             name: normalized.name || '',
             country: normalized.country || ''
           });
-          written++;
         }
 
-        // Send city IDs back to main thread for mapping
+        const writtenThisPage = cityIds.length;
         if (cityIds.length > 0) {
           self.postMessage({
             taskId,
             type: 'city-ids',
-            payload: {
-              workerId,
-              cityData: cityIds
-            }
+            payload: { workerId, cityData: cityIds }
           });
         }
 
-        // Check if we've reached capacity
-        const currentCount = Atomics.load(sharedBuffers.writeIndex, 0);
-        if (currentCount >= sharedBuffers.capacity) {
-          break;
-        }
-
-        // Move to next strided offset
-        currentOffset += totalWorkers * pageSize;
-
-        // If no more cities in this page, we're done
-        if (cities.length < pageSize) {
-          break;
-        }
+        state = nextState(state, {
+          fetchedDelta: cities.length,
+          writtenDelta: writtenThisPage,
+          pageSize,
+          totalWorkers,
+          capacityExceeded: capacityExceeded || Atomics.load(sharedBuffers.writeIndex, 0) >= sharedBuffers.capacity
+        });
       } catch (error) {
         self.postMessage({
           taskId,
           type: 'progress',
           payload: {
             workerId,
-            offset: currentOffset,
+            offset: state.offset,
             error: error.message,
-            fetched,
-            written
+            fetched: state.fetched,
+            written: state.written
           }
         });
-        // Continue with next offset
-        currentOffset += totalWorkers * pageSize;
+        state = nextState(state, {
+          fetchedDelta: pageSize,
+          writtenDelta: 0,
+          pageSize,
+          totalWorkers,
+          capacityExceeded: false
+        });
       }
     }
 
-    // Task complete
     self.postMessage({
       taskId,
       type: 'task-complete',
       payload: {
         workerId,
-        fetched,
-        written
+        fetched: state.fetched,
+        written: state.written
       }
     });
   } catch (error) {
@@ -286,3 +292,5 @@ self.onmessage = async function(e) {
     });
   }
 };
+
+export {};

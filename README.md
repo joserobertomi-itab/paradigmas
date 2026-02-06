@@ -28,11 +28,20 @@ This repository contains two applications that can be run together using Docker 
    - `fastapi-app/.env`: Set database credentials
    - `geodb-kmeans/.env`: Set RapidAPI key (optional, can use root .env)
 
-3. **Start all services:**
+3. **Build, compose, and migrate-seed:**
 
    ```bash
+   # Build all service images
+   make build
+
+   # Start all services (database, API, frontend, pgWeb)
    make up
+
+   # Apply database migrations and import cities data from CSV
+   make migrate-seed
    ```
+
+   Then open **Frontend**: http://localhost:5173 and **API Docs**: http://localhost:8000/docs
 
 ## 🛠️ Make Commands
 

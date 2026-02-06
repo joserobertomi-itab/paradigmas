@@ -22,6 +22,40 @@ function getClusterColor(index) {
   return CLUSTER_COLORS[index % CLUSTER_COLORS.length];
 }
 
+/**
+ * Fisher–Yates shuffle (mutates array)
+ */
+function shuffleArray(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+/**
+ * Take a random sample of cities for drawing when total exceeds maxPoints.
+ * Returns array of { clusterIndex, color, city } for drawing.
+ */
+function samplePointsForDrawing(clusters, maxPoints) {
+  const all = [];
+  for (let i = 0; i < clusters.length; i++) {
+    const cluster = clusters[i];
+    const clusterIndex = cluster.index !== undefined ? cluster.index : i;
+    const color = getClusterColor(clusterIndex);
+    const cities = cluster.cities || cluster.sampleCities || [];
+    for (const city of cities) {
+      const lat = city.latitude ?? city.lat;
+      const lon = city.longitude ?? city.lon;
+      if (isValidCoord(lat, lon)) {
+        all.push({ clusterIndex, color, city });
+      }
+    }
+  }
+  if (all.length <= maxPoints) return all;
+  return shuffleArray([...all]).slice(0, maxPoints);
+}
+
 function isValidCoord(lat, lon) {
   return (
     typeof lat === 'number' &&
@@ -39,47 +73,43 @@ function isValidCoord(lat, lon) {
  * Collect bounds (min/max lat/lon) from clusters (cities + centroids) with padding.
  */
 function computeBounds(clusters) {
-  let minLat = Infinity;
-  let maxLat = -Infinity;
-  let minLon = Infinity;
-  let maxLon = -Infinity;
-
-  for (const cluster of clusters) {
+  const coords = clusters.flatMap(cluster => {
+    const out = [];
     const centroid = cluster.centroid || {};
     if (isValidCoord(centroid.latitude, centroid.longitude)) {
-      minLat = Math.min(minLat, centroid.latitude);
-      maxLat = Math.max(maxLat, centroid.latitude);
-      minLon = Math.min(minLon, centroid.longitude);
-      maxLon = Math.max(maxLon, centroid.longitude);
+      out.push([centroid.latitude, centroid.longitude]);
     }
     const cities = cluster.cities || cluster.sampleCities || [];
-    for (const city of cities) {
+    cities.forEach(city => {
       const lat = city.latitude ?? city.lat;
       const lon = city.longitude ?? city.lon;
-      if (isValidCoord(lat, lon)) {
-        minLat = Math.min(minLat, lat);
-        maxLat = Math.max(maxLat, lat);
-        minLon = Math.min(minLon, lon);
-        maxLon = Math.max(maxLon, lon);
-      }
-    }
-  }
+      if (isValidCoord(lat, lon)) out.push([lat, lon]);
+    });
+    return out;
+  });
 
-  if (minLat === Infinity) {
-    minLat = -90;
-    maxLat = 90;
-    minLon = -180;
-    maxLon = 180;
-  } else {
-    const padLat = Math.max(PADDING_DEG, (maxLat - minLat) * 0.05 || PADDING_DEG);
-    const padLon = Math.max(PADDING_DEG, (maxLon - minLon) * 0.05 || PADDING_DEG);
-    minLat -= padLat;
-    maxLat += padLat;
-    minLon -= padLon;
-    maxLon += padLon;
-  }
+  const initial = { minLat: Infinity, maxLat: -Infinity, minLon: Infinity, maxLon: -Infinity };
+  const bounds = coords.reduce(
+    (acc, [lat, lon]) => ({
+      minLat: Math.min(acc.minLat, lat),
+      maxLat: Math.max(acc.maxLat, lat),
+      minLon: Math.min(acc.minLon, lon),
+      maxLon: Math.max(acc.maxLon, lon)
+    }),
+    initial
+  );
 
-  return { minLat, maxLat, minLon, maxLon };
+  if (bounds.minLat === Infinity) {
+    return { minLat: -90, maxLat: 90, minLon: -180, maxLon: 180 };
+  }
+  const padLat = Math.max(PADDING_DEG, (bounds.maxLat - bounds.minLat) * 0.05 || PADDING_DEG);
+  const padLon = Math.max(PADDING_DEG, (bounds.maxLon - bounds.minLon) * 0.05 || PADDING_DEG);
+  return {
+    minLat: bounds.minLat - padLat,
+    maxLat: bounds.maxLat + padLat,
+    minLon: bounds.minLon - padLon,
+    maxLon: bounds.maxLon + padLon
+  };
 }
 
 /**
@@ -169,6 +199,8 @@ function drawLabels(ctx, cssWidth, cssHeight, insets, clusters) {
  * @param {boolean} [options.showLabels=true] - draw axis labels and legend
  * @param {number} [options.pointRadius=2] - radius for city points
  * @param {number} [options.centroidRadius=6] - radius for centroid marker
+ * @param {number} [options.maxPointsToDraw=2000] - max random city points to draw (avoids overcrowding; use random sample when dataset is larger)
+ * @param {Array<{ latitude?: number, longitude?: number, lat?: number, lng?: number }>} [options.selectedCities=[]] - cities from selected-cities-container; draw an X marker for each
  */
 export function drawClusterPlot(canvas, clusters, options = {}) {
   if (!canvas || !clusters || clusters.length === 0) return;
@@ -178,6 +210,8 @@ export function drawClusterPlot(canvas, clusters, options = {}) {
   const insets = options.insets ?? (showLabels ? DEFAULT_INSETS : { left: padding, right: padding, top: padding, bottom: padding });
   const pointRadius = options.pointRadius ?? 2;
   const centroidRadius = options.centroidRadius ?? 6;
+  const maxPointsToDraw = options.maxPointsToDraw ?? 2000;
+  const selectedCities = options.selectedCities ?? [];
 
   const dpr = window.devicePixelRatio ?? 1;
   const rect = canvas.getBoundingClientRect();
@@ -196,25 +230,40 @@ export function drawClusterPlot(canvas, clusters, options = {}) {
   ctx.fillStyle = '#f8f9fa';
   ctx.fillRect(0, 0, cssWidth, cssHeight);
 
-  const bounds = computeBounds(clusters);
-
-  // Draw city points per cluster
-  for (let i = 0; i < clusters.length; i++) {
-    const cluster = clusters[i];
-    const clusterIndex = cluster.index !== undefined ? cluster.index : i;
-    const color = getClusterColor(clusterIndex);
-    const cities = cluster.cities || cluster.sampleCities || [];
-
-    ctx.fillStyle = color;
-    for (const city of cities) {
+  let bounds = computeBounds(clusters);
+  if (selectedCities.length > 0) {
+    for (const city of selectedCities) {
       const lat = city.latitude ?? city.lat;
       const lon = city.longitude ?? city.lon;
       if (!isValidCoord(lat, lon)) continue;
-      const { x, y } = toCanvas(lat, lon, bounds, cssWidth, cssHeight, insets);
-      ctx.beginPath();
-      ctx.arc(x, y, pointRadius, 0, Math.PI * 2);
-      ctx.fill();
+      bounds = {
+        minLat: Math.min(bounds.minLat, lat),
+        maxLat: Math.max(bounds.maxLat, lat),
+        minLon: Math.min(bounds.minLon, lon),
+        maxLon: Math.max(bounds.maxLon, lon)
+      };
     }
+    const padLat = Math.max(PADDING_DEG, (bounds.maxLat - bounds.minLat) * 0.05 || PADDING_DEG);
+    const padLon = Math.max(PADDING_DEG, (bounds.maxLon - bounds.minLon) * 0.05 || PADDING_DEG);
+    bounds = {
+      minLat: bounds.minLat - padLat,
+      maxLat: bounds.maxLat + padLat,
+      minLon: bounds.minLon - padLon,
+      maxLon: bounds.maxLon + padLon
+    };
+  }
+
+  // Draw city points: use random sample when dataset is large so chart stays readable
+  const pointsToDraw = samplePointsForDrawing(clusters, maxPointsToDraw);
+  for (const { color, city } of pointsToDraw) {
+    const lat = city.latitude ?? city.lat;
+    const lon = city.longitude ?? city.lon;
+    if (!isValidCoord(lat, lon)) continue;
+    const { x, y } = toCanvas(lat, lon, bounds, cssWidth, cssHeight, insets);
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x, y, pointRadius, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   // Draw centroids (larger, with stroke)
@@ -235,6 +284,24 @@ export function drawClusterPlot(canvas, clusters, options = {}) {
     ctx.beginPath();
     ctx.arc(x, y, centroidRadius, 0, Math.PI * 2);
     ctx.fill();
+    ctx.stroke();
+  }
+
+  // Draw X marker for each selected city (from selected-cities-container)
+  const xMarkerSize = 8;
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 4;
+  ctx.lineCap = 'round';
+  for (const city of selectedCities) {
+    const lat = city.latitude ?? city.lat;
+    const lon = city.longitude ?? city.lon;
+    if (!isValidCoord(lat, lon)) continue;
+    const { x, y } = toCanvas(lat, lon, bounds, cssWidth, cssHeight, insets);
+    ctx.beginPath();
+    ctx.moveTo(x - xMarkerSize, y - xMarkerSize);
+    ctx.lineTo(x + xMarkerSize, y + xMarkerSize);
+    ctx.moveTo(x - xMarkerSize, y + xMarkerSize);
+    ctx.lineTo(x + xMarkerSize, y - xMarkerSize);
     ctx.stroke();
   }
 

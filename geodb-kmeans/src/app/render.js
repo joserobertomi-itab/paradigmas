@@ -16,6 +16,8 @@ import {
   selectSelectedOrder,
   selectPage,
   selectBulkLoaded,
+  selectBulkDataSource,
+  selectBulkTargetCount,
   selectAsyncStatus,
   selectAsyncProgress,
   selectAsyncLogs,
@@ -90,6 +92,33 @@ export function render(root, state) {
   if (selectedCountEl) {
     const selectedCount = selectSelectedCount(state);
     setText(selectedCountEl, selectedCount.toString());
+  }
+
+  // Sync bulk data source and target count
+  const dataSource = selectBulkDataSource(state);
+  const radiusRadio = qs('#bulk-data-source-radius', root);
+  const pagesRadio = qs('#bulk-data-source-pages', root);
+  const targetCountGroup = qs('#bulk-target-count-group', root);
+  const targetCountInput = qs('#bulkTargetCountInput', root);
+  const radiusInputGroup = qs('#radius-input-group', root);
+  const hasSharedArrayBuffer = typeof SharedArrayBuffer !== 'undefined';
+  if (radiusRadio && pagesRadio) {
+    if (dataSource === 'pages') {
+      pagesRadio.checked = true;
+      if (targetCountGroup) targetCountGroup.style.display = hasSharedArrayBuffer ? '' : 'none';
+      if (radiusInputGroup) radiusInputGroup.style.display = 'none';
+    } else {
+      radiusRadio.checked = true;
+      if (targetCountGroup) targetCountGroup.style.display = 'none';
+      if (radiusInputGroup) radiusInputGroup.style.display = '';
+    }
+    pagesRadio.disabled = !hasSharedArrayBuffer;
+  }
+  if (targetCountInput) {
+    const targetCount = selectBulkTargetCount(state);
+    if (parseInt(targetCountInput.value, 10) !== targetCount) {
+      targetCountInput.value = targetCount;
+    }
   }
 
   // Render page info
@@ -206,10 +235,19 @@ export function render(root, state) {
       setHTML(clustersListEl, clusterList(clusters, clusterFilter));
     }
 
-    // Draw cluster plot
+    // Draw cluster plot: use actual dataset size so chart point count matches loaded data (and target when applicable)
     const plotCanvas = qs('#clusters-plot', clustersContainer);
     if (plotCanvas) {
-      drawClusterPlot(plotCanvas, clusters, { padding: 20 });
+      const totalPoints = clusters.reduce(
+        (sum, c) => sum + (c.cities || c.sampleCities || []).length,
+        0
+      );
+      const selectedCities = selectSelectedCities(state);
+      drawClusterPlot(plotCanvas, clusters, {
+        padding: 20,
+        maxPointsToDraw: totalPoints,
+        selectedCities
+      });
     }
   } else {
     // Remove clusters container if no clusters
