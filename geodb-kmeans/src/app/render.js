@@ -235,10 +235,19 @@ export function render(root, state) {
       setHTML(clustersListEl, clusterList(clusters, clusterFilter));
     }
 
-    // Draw cluster plot
+    // Draw cluster plot: use actual dataset size so chart point count matches loaded data (and target when applicable)
     const plotCanvas = qs('#clusters-plot', clustersContainer);
     if (plotCanvas) {
-      drawClusterPlot(plotCanvas, clusters, { padding: 20 });
+      const totalPoints = clusters.reduce(
+        (sum, c) => sum + (c.cities || c.sampleCities || []).length,
+        0
+      );
+      const selectedCities = selectSelectedCities(state);
+      drawClusterPlot(plotCanvas, clusters, {
+        padding: 20,
+        maxPointsToDraw: totalPoints,
+        selectedCities
+      });
     }
   } else {
     // Remove clusters container if no clusters

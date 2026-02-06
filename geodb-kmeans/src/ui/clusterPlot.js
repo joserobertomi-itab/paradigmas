@@ -200,6 +200,7 @@ function drawLabels(ctx, cssWidth, cssHeight, insets, clusters) {
  * @param {number} [options.pointRadius=2] - radius for city points
  * @param {number} [options.centroidRadius=6] - radius for centroid marker
  * @param {number} [options.maxPointsToDraw=2000] - max random city points to draw (avoids overcrowding; use random sample when dataset is larger)
+ * @param {Array<{ latitude?: number, longitude?: number, lat?: number, lng?: number }>} [options.selectedCities=[]] - cities from selected-cities-container; draw an X marker for each
  */
 export function drawClusterPlot(canvas, clusters, options = {}) {
   if (!canvas || !clusters || clusters.length === 0) return;
@@ -210,6 +211,7 @@ export function drawClusterPlot(canvas, clusters, options = {}) {
   const pointRadius = options.pointRadius ?? 2;
   const centroidRadius = options.centroidRadius ?? 6;
   const maxPointsToDraw = options.maxPointsToDraw ?? 2000;
+  const selectedCities = options.selectedCities ?? [];
 
   const dpr = window.devicePixelRatio ?? 1;
   const rect = canvas.getBoundingClientRect();
@@ -228,7 +230,28 @@ export function drawClusterPlot(canvas, clusters, options = {}) {
   ctx.fillStyle = '#f8f9fa';
   ctx.fillRect(0, 0, cssWidth, cssHeight);
 
-  const bounds = computeBounds(clusters);
+  let bounds = computeBounds(clusters);
+  if (selectedCities.length > 0) {
+    for (const city of selectedCities) {
+      const lat = city.latitude ?? city.lat;
+      const lon = city.longitude ?? city.lon;
+      if (!isValidCoord(lat, lon)) continue;
+      bounds = {
+        minLat: Math.min(bounds.minLat, lat),
+        maxLat: Math.max(bounds.maxLat, lat),
+        minLon: Math.min(bounds.minLon, lon),
+        maxLon: Math.max(bounds.maxLon, lon)
+      };
+    }
+    const padLat = Math.max(PADDING_DEG, (bounds.maxLat - bounds.minLat) * 0.05 || PADDING_DEG);
+    const padLon = Math.max(PADDING_DEG, (bounds.maxLon - bounds.minLon) * 0.05 || PADDING_DEG);
+    bounds = {
+      minLat: bounds.minLat - padLat,
+      maxLat: bounds.maxLat + padLat,
+      minLon: bounds.minLon - padLon,
+      maxLon: bounds.maxLon + padLon
+    };
+  }
 
   // Draw city points: use random sample when dataset is large so chart stays readable
   const pointsToDraw = samplePointsForDrawing(clusters, maxPointsToDraw);
@@ -261,6 +284,24 @@ export function drawClusterPlot(canvas, clusters, options = {}) {
     ctx.beginPath();
     ctx.arc(x, y, centroidRadius, 0, Math.PI * 2);
     ctx.fill();
+    ctx.stroke();
+  }
+
+  // Draw X marker for each selected city (from selected-cities-container)
+  const xMarkerSize = 8;
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 4;
+  ctx.lineCap = 'round';
+  for (const city of selectedCities) {
+    const lat = city.latitude ?? city.lat;
+    const lon = city.longitude ?? city.lon;
+    if (!isValidCoord(lat, lon)) continue;
+    const { x, y } = toCanvas(lat, lon, bounds, cssWidth, cssHeight, insets);
+    ctx.beginPath();
+    ctx.moveTo(x - xMarkerSize, y - xMarkerSize);
+    ctx.lineTo(x + xMarkerSize, y + xMarkerSize);
+    ctx.moveTo(x - xMarkerSize, y + xMarkerSize);
+    ctx.lineTo(x + xMarkerSize, y - xMarkerSize);
     ctx.stroke();
   }
 
