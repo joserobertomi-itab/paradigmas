@@ -360,6 +360,24 @@ export function reducer(state = initialState, action) {
         }
       };
 
+    case 'BULK/SET_DATA_SOURCE':
+      return {
+        ...state,
+        bulk: {
+          ...state.bulk,
+          dataSource: action.payload === 'pages' ? 'pages' : 'radius'
+        }
+      };
+
+    case 'BULK/SET_TARGET_COUNT':
+      return {
+        ...state,
+        bulk: {
+          ...state.bulk,
+          targetCount: Math.max(1000, Math.min(50000, action.payload || 10000))
+        }
+      };
+
     // K-means actions
     case 'KMEANS/SET_CLUSTERS':
       return {

@@ -16,6 +16,8 @@ import {
   selectSelectedOrder,
   selectPage,
   selectBulkLoaded,
+  selectBulkDataSource,
+  selectBulkTargetCount,
   selectAsyncStatus,
   selectAsyncProgress,
   selectAsyncLogs,
@@ -90,6 +92,30 @@ export function render(root, state) {
   if (selectedCountEl) {
     const selectedCount = selectSelectedCount(state);
     setText(selectedCountEl, selectedCount.toString());
+  }
+
+  // Sync bulk data source and target count
+  const dataSource = selectBulkDataSource(state);
+  const radiusRadio = qs('#bulk-data-source-radius', root);
+  const pagesRadio = qs('#bulk-data-source-pages', root);
+  const targetCountGroup = qs('#bulk-target-count-group', root);
+  const targetCountInput = qs('#bulkTargetCountInput', root);
+  const hasSharedArrayBuffer = typeof SharedArrayBuffer !== 'undefined';
+  if (radiusRadio && pagesRadio) {
+    if (dataSource === 'pages') {
+      pagesRadio.checked = true;
+      if (targetCountGroup) targetCountGroup.style.display = hasSharedArrayBuffer ? '' : 'none';
+    } else {
+      radiusRadio.checked = true;
+      if (targetCountGroup) targetCountGroup.style.display = 'none';
+    }
+    pagesRadio.disabled = !hasSharedArrayBuffer;
+  }
+  if (targetCountInput) {
+    const targetCount = selectBulkTargetCount(state);
+    if (parseInt(targetCountInput.value, 10) !== targetCount) {
+      targetCountInput.value = targetCount;
+    }
   }
 
   // Render page info

@@ -85,6 +85,16 @@ export function selectBulkLoaded(state) {
   return state.bulk?.loaded || 0;
 }
 
+export function selectBulkDataSource(state) {
+  return state.bulk?.dataSource === 'pages' ? 'pages' : 'radius';
+}
+
+export function selectBulkTargetCount(state) {
+  const raw = state.bulk?.targetCount;
+  if (raw == null) return 10000;
+  return Math.max(1000, Math.min(50000, raw));
+}
+
 export function selectBulkProgress(state) {
   const total = selectBulkTotalTarget(state);
   const loaded = selectBulkLoaded(state);

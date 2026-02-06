@@ -77,7 +77,7 @@ function createRateLimitedFetcher() {
       });
   }
 
-  return function fetchCitiesPage({ apiBaseUrl, sort, offset, limit }) {
+  return function fetchCitiesPage({ apiBaseUrl, sort, prefix, offset, limit }) {
     return new Promise((resolve, reject) => {
       requestQueue.push(async () => {
         try {
@@ -85,6 +85,12 @@ function createRateLimitedFetcher() {
             limit: limit.toString(),
             offset: offset.toString()
           });
+          if (sort) {
+            params.set('sort', sort);
+          }
+          if (prefix) {
+            params.set('prefix', prefix);
+          }
           const baseUrl = apiBaseUrl || 'http://localhost:8000';
           const url = `${baseUrl}/api/v1/cities?${params.toString()}`;
 
@@ -105,8 +111,9 @@ function createRateLimitedFetcher() {
             throw new Error(errorMessage);
           }
 
-          const cities = await response.json();
-          resolve({ data: cities || [] });
+          const body = await response.json();
+          const data = Array.isArray(body) ? body : (body?.data ?? []);
+          resolve({ data });
         } catch (error) {
           reject(error);
         }
@@ -285,3 +292,5 @@ self.onmessage = async function(e) {
     });
   }
 };
+
+export {};

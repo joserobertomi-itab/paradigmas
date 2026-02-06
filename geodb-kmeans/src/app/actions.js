@@ -28,6 +28,8 @@ export const ActionTypes = {
   // Bulk
   BULK_SET_LOADED: 'BULK/SET_LOADED',
   BULK_SET_TOTAL_TARGET: 'BULK/SET_TOTAL_TARGET',
+  BULK_SET_DATA_SOURCE: 'BULK/SET_DATA_SOURCE',
+  BULK_SET_TARGET_COUNT: 'BULK/SET_TARGET_COUNT',
 
   // K-means
   KMEANS_SET_CLUSTERS: 'KMEANS/SET_CLUSTERS',
@@ -149,6 +151,16 @@ export const setBulkTotalTarget = (totalTarget) => ({
   payload: totalTarget
 });
 
+export const setBulkDataSource = (dataSource) => ({
+  type: ActionTypes.BULK_SET_DATA_SOURCE,
+  payload: dataSource
+});
+
+export const setBulkTargetCount = (targetCount) => ({
+  type: ActionTypes.BULK_SET_TARGET_COUNT,
+  payload: targetCount
+});
+
 // K-means actions
 export const setClusters = (clusters) => ({
   type: ActionTypes.KMEANS_SET_CLUSTERS,
@@ -205,6 +217,8 @@ export const actions = {
   // Bulk
   setBulkLoaded,
   setBulkTotalTarget,
+  setBulkDataSource,
+  setBulkTargetCount,
 
   // K-means
   setClusters,
